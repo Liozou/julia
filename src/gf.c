@@ -8,6 +8,7 @@
   . static parameter inference
   . method specialization and caching, invoking type inference
 */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "julia.h"
@@ -2159,12 +2160,42 @@ jl_method_instance_t *jl_lookup_generic(jl_value_t **args, uint32_t nargs, uint3
     return jl_lookup_generic_(args, nargs, callsite, world);
 }
 
+JL_DLLEXPORT void toggle_a(void) { _toggle_a = !_toggle_a; }
+JL_DLLEXPORT void toggle_b(void) { _toggle_b = !_toggle_b; }
+JL_DLLEXPORT void toggle_c(void) { _toggle_c = !_toggle_c; }
+JL_DLLEXPORT void toggle_d(void) { _toggle_d = !_toggle_d; }
+JL_DLLEXPORT void toggle_e(void) { _toggle_e = !_toggle_e; }
+
 JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
 {
     jl_method_instance_t *mfunc = jl_lookup_generic_(args, nargs,
                                                      jl_int32hash_fast(jl_return_address()),
                                                      jl_get_ptls_states()->world_age);
+
+    if(_toggle_a) {
+        jl_method_t *def = mfunc->def.method;
+        /*
+        jl_method_instance_t *my_mfunc = mfunc;
+            if (_toggle_duh && jl_is_method(def)) {
+               struct _jl_method_instance_t *unspecialized = def->unspecialized;
+               if(unspecialized) {
+                  jl_method_t *tmp_def = unspecialized->def.method;
+                  if(jl_is_method(tmp_def)) {
+                      def = tmp_def;
+                      my_mfunc = unspecialized;
+                  }
+               }
+               jl_(def->name); // name of the generic function
+               jl_(def->sig); // type of the arguments of the called method.
+               // jl_(my_mfunc->specTypes); // type of the arguments of the generic function.
+              // "jl_(args);" // type of the arguments
+        }
+        */
+        jl_(def->name); // name of the generic function
+        jl_(def->sig); // type of the arguments of the called method.
+    }
     jl_value_t *res = mfunc->invoke(mfunc, args, nargs);
+
     return verify_type(res);
 }
 
