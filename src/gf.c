@@ -19,7 +19,115 @@
 #include "julia_assert.h"
 
 #include "uthash.h"
-//#include "../handmade/watergate.h"
+JL_DLLEXPORT int _toggle_a = 0;
+JL_DLLEXPORT int _toggle_b = 0;
+JL_DLLEXPORT int _toggle_c = 0;
+JL_DLLEXPORT int _toggle_d = 0;
+JL_DLLEXPORT int _toggle_e = 0;
+
+JL_DLLEXPORT void jl_toggle_a(void) { _toggle_a = !_toggle_a; }
+JL_DLLEXPORT void jl_toggle_b(void) { _toggle_b = !_toggle_b; }
+JL_DLLEXPORT void jl_toggle_c(void) { _toggle_c = !_toggle_c; }
+JL_DLLEXPORT void jl_toggle_d(void) { _toggle_d = !_toggle_d; }
+JL_DLLEXPORT void jl_toggle_e(void) { _toggle_e = !_toggle_e; }
+
+typedef struct _hash_calls {
+    uintptr_t id_calls;
+    jl_value_t *specTypes;
+    int* count;
+    UT_hash_handle hh;
+} hash_calls;
+
+typedef struct _hash_methods {
+    uintptr_t id_methods;
+    jl_value_t *signature;
+    hash_calls** calls;
+    UT_hash_handle hh; // makes this structure hashable
+} hash_methods;
+
+typedef struct _hash_functions {
+    jl_sym_t *name;
+    hash_methods** methods; // pointer to the hashtable of the methods
+    UT_hash_handle hh;
+} hash_functions;
+hash_functions *record = NULL;
+
+hash_functions* add_hashed_function(jl_sym_t *name)
+{
+    hash_functions* new_function =  (hash_functions*)malloc(sizeof(hash_functions));
+    new_function->name = name;
+    hash_methods** p_methods = (hash_methods**)malloc(sizeof(hash_methods*));
+    *p_methods = NULL;
+    new_function->methods = p_methods;
+    HASH_ADD_KEYPTR(hh, record, name, sizeof(jl_sym_t), new_function);
+    return new_function;
+}
+
+hash_methods* add_hashed_method(jl_value_t *signature, hash_functions *function)
+{
+    hash_methods *new_method = (hash_methods*)malloc(sizeof(hash_methods));
+    new_method->signature = signature;
+    new_method->id_methods = jl_object_id(signature);
+    hash_calls** p_calls = (hash_calls**)malloc(sizeof(hash_calls*));
+    *p_calls = NULL;
+    new_method->calls = p_calls;
+    HASH_ADD(hh, *(function->methods), id_methods, sizeof(uintptr_t), new_method);
+    return new_method;
+}
+
+hash_calls* add_hashed_call(jl_value_t *specTypes, hash_methods *method)
+{
+    hash_calls *new_call = (hash_calls*)malloc(sizeof(hash_calls));
+    new_call->specTypes = specTypes;
+    new_call->id_calls = jl_object_id(specTypes);
+    new_call->count = (int*)malloc(sizeof(int));
+    *(new_call->count) = 0;
+    HASH_ADD(hh, *(method->calls), id_calls, sizeof(uintptr_t), new_call);
+    return new_call;
+}
+
+JL_DLLEXPORT void record_new_call(jl_sym_t *name, jl_value_t *signature, jl_value_t *specTypes)
+{
+    hash_functions *function = (hash_functions*)malloc(sizeof(hash_functions));
+    hash_methods *method = (hash_methods*)malloc(sizeof(hash_methods));
+    hash_calls *call = (hash_calls*)malloc(sizeof(hash_calls));
+    HASH_FIND(hh, record, name, sizeof(jl_sym_t), function);
+    if(!function) {
+        function = add_hashed_function(name);
+    }
+    uintptr_t id_signature = jl_object_id(signature);
+    HASH_FIND(hh, *(function->methods), &id_signature, sizeof(uintptr_t), method);
+    if(!method) {
+        method = add_hashed_method(signature, function);
+    }
+    uintptr_t id_specTypes = jl_object_id(specTypes);
+    HASH_FIND(hh, *(method->calls), &id_specTypes, sizeof(uintptr_t), call);
+    if(!call) {
+        call = add_hashed_call(specTypes, method);
+    }
+    *(call->count) = *(call->count) + 1;
+
+    //jl_(specTypes);
+}
+
+JL_DLLEXPORT hash_functions* jl_export_record(void)
+{
+    for(hash_functions *f = record; f != NULL; f = (hash_functions*)f->hh.next) {
+        jl_printf(JL_STDERR, "\n");
+        jl_(f->name);
+        for(hash_methods* m = *(f->methods); m != NULL; m = (hash_methods*)m->hh.next) {
+            jl_printf(JL_STDERR, "$");
+            jl_(m->signature);
+            for(hash_calls* c = *(m->calls); c != NULL; c = (hash_calls*)c->hh.next) {
+                jl_printf(JL_STDERR, " ");
+                jl_(c->specTypes);
+                jl_printf(JL_STDERR, "%d\n", *(c->count));
+            }
+        }
+    }
+    return record;
+}
+
 
 // @nospecialize has no effect if the number of overlapping methods is greater than this
 #define MAX_UNSPECIALIZED_CONFLICTS 32
@@ -2164,79 +2272,6 @@ jl_method_instance_t *jl_lookup_generic(jl_value_t **args, uint32_t nargs, uint3
 }
 
 
-JL_DLLEXPORT int _toggle_a = 1;
-JL_DLLEXPORT void toggle_a(void) { _toggle_a = !_toggle_a; }
-
-typedef struct _hash_methods {
-    jl_value_t *signature;
-    int* count;
-    UT_hash_handle hh; // makes this structure hashable
-} hash_methods;
-
-typedef struct _hash_functions {
-    jl_sym_t *name;
-    hash_methods** methods; // pointer to the hashtable of the methods
-    UT_hash_handle hh;
-} hash_functions;
-hash_functions *record = NULL;
-
-hash_functions* add_hashed_function(jl_sym_t *name)
-{
-    hash_functions* new_function =  (hash_functions*)malloc(sizeof(hash_functions));
-    new_function->name = name;
-    hash_methods** p_methods = (hash_methods**)malloc(sizeof(hash_methods*));
-    *p_methods = NULL;
-    new_function->methods = p_methods;
-    HASH_ADD_KEYPTR(hh, record, name, sizeof(jl_sym_t), new_function);
-    return new_function;
-}
-
-hash_methods* add_hashed_method(jl_value_t *signature, hash_functions *function)
-{
-    hash_methods *new_method = (hash_methods*)malloc(sizeof(hash_methods));
-    new_method->count = (int*)malloc(sizeof(int));
-    *(new_method->count) = 0;
-    new_method->signature = signature;
-    HASH_ADD_KEYPTR(hh, *(function->methods), signature, sizeof(int), new_method);
-    return new_method;
-}
-
-JL_DLLEXPORT void record_new_call(jl_sym_t *name, jl_value_t *signature)
-{
-    /* jl_(name);
-    jl_(signature); */
-    hash_functions *tmp_hash_function = (hash_functions*)malloc(sizeof(hash_functions));
-    hash_methods   *tmp_hash_method   = (hash_methods*)malloc(sizeof(hash_methods  ));
-    HASH_FIND(hh, record, name, sizeof(jl_sym_t), tmp_hash_function);
-    if(!tmp_hash_function) {
-        tmp_hash_function = add_hashed_function(name);
-    }
-    HASH_FIND(hh, *(tmp_hash_function->methods), signature,\
-              sizeof(int), tmp_hash_method);
-    if(!tmp_hash_method) {
-        tmp_hash_method = add_hashed_method(signature, tmp_hash_function);
-    }
-    *(tmp_hash_method->count)++;
-}
-
-JL_DLLEXPORT hash_functions* see_record(void)
-{
-    return record;
-}
-/*
-JL_DLLEXPORT int _toggle_b = 0;
-JL_DLLEXPORT int _toggle_c = 0;
-JL_DLLEXPORT int _toggle_d = 0;
-JL_DLLEXPORT int _toggle_e = 0;
-
-JL_DLLEXPORT void toggle_b(void) { _toggle_b = !_toggle_b; }
-JL_DLLEXPORT void toggle_c(void) { _toggle_c = !_toggle_c; }
-JL_DLLEXPORT void toggle_d(void) { _toggle_d = !_toggle_d; }
-JL_DLLEXPORT void toggle_e(void) { _toggle_e = !_toggle_e; }
-*/
-
-
-
 JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
 {
     jl_method_instance_t *mfunc = jl_lookup_generic_(args, nargs,
@@ -2264,7 +2299,11 @@ JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
         jl_(def->name); // name of the generic function
         jl_(def->sig); // type of the arguments of the called method.
         */
-        record_new_call(def->name, def->sig);
+        if (jl_is_method(def)) {
+            record_new_call(def->name, def->sig, mfunc->specTypes);
+        } else {
+            jl_printf(JL_STDERR, "***\n");
+        }
     }
     jl_value_t *res = mfunc->invoke(mfunc, args, nargs);
 
