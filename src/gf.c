@@ -25,6 +25,12 @@ JL_DLLEXPORT int _toggle_c = 0;
 JL_DLLEXPORT int _toggle_d = 0;
 JL_DLLEXPORT int _toggle_e = 0;
 
+JL_DLLEXPORT int jl_get_toggle_a(void) { return _toggle_a; }
+JL_DLLEXPORT int jl_get_toggle_b(void) { return _toggle_b; }
+JL_DLLEXPORT int jl_get_toggle_c(void) { return _toggle_c; }
+JL_DLLEXPORT int jl_get_toggle_d(void) { return _toggle_d; }
+JL_DLLEXPORT int jl_get_toggle_e(void) { return _toggle_e; }
+
 JL_DLLEXPORT void jl_toggle_a(void) { _toggle_a = !_toggle_a; }
 JL_DLLEXPORT void jl_toggle_b(void) { _toggle_b = !_toggle_b; }
 JL_DLLEXPORT void jl_toggle_c(void) { _toggle_c = !_toggle_c; }
@@ -50,6 +56,7 @@ typedef struct _hash_functions {
     hash_methods** methods; // pointer to the hashtable of the methods
     UT_hash_handle hh;
 } hash_functions;
+
 hash_functions *record = NULL;
 
 hash_functions* add_hashed_function(jl_sym_t *name)
@@ -128,6 +135,38 @@ JL_DLLEXPORT hash_functions* jl_export_record(void)
     return record;
 }
 
+JL_DLLEXPORT void jl_export_record_and_free(void)
+{
+    hash_functions *f = record;
+    hash_functions *f_next;
+    for(; f != NULL; f = f_next) {
+        jl_printf(JL_STDERR, "\n");
+        jl_(f->name);
+        hash_methods* m = *(f->methods);
+        hash_methods* m_next;
+        for(; m != NULL; m = m_next) {
+            jl_printf(JL_STDERR, "$");
+            jl_(m->signature);
+            hash_calls* c = *(m->calls);
+            hash_calls* c_next;
+            for(; c != NULL; c = c_next) {
+                jl_printf(JL_STDERR, " ");
+                jl_(c->specTypes);
+                jl_printf(JL_STDERR, "%d\n", *(c->count));
+                c_next = (hash_calls*)c->hh.next;
+                free(c->count);
+                free(c);
+            }
+            m_next = (hash_methods*)m->hh.next;
+            free(m->calls);
+            free(m);
+        }
+        f_next = (hash_functions*)f->hh.next;
+        free(f->methods);
+        free(f);
+    }
+    record = NULL;
+}
 
 // @nospecialize has no effect if the number of overlapping methods is greater than this
 #define MAX_UNSPECIALIZED_CONFLICTS 32
@@ -2279,6 +2318,7 @@ JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
                                                      jl_get_ptls_states()->world_age);
 
     if(_toggle_a) {
+        //jl_(args[0]);
         jl_method_t *def = mfunc->def.method;
         /*
         jl_method_instance_t *my_mfunc = mfunc;
@@ -2302,7 +2342,7 @@ JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
         if (jl_is_method(def)) {
             record_new_call(def->name, def->sig, mfunc->specTypes);
         } else {
-            jl_printf(JL_STDERR, "***\n");
+            jl_printf(JL_STDERR, "***\n\n");
         }
     }
     jl_value_t *res = mfunc->invoke(mfunc, args, nargs);

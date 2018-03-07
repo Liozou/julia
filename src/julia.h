@@ -1524,6 +1524,12 @@ STATIC_INLINE int jl_vinfo_usedundef(uint8_t vi)
 
 // calling into julia ---------------------------------------------------------
 
+JL_DLLEXPORT int jl_get_toggle_a(void);
+JL_DLLEXPORT int jl_get_toggle_b(void);
+JL_DLLEXPORT int jl_get_toggle_c(void);
+JL_DLLEXPORT int jl_get_toggle_d(void);
+JL_DLLEXPORT int jl_get_toggle_e(void);
+
 JL_DLLEXPORT void jl_toggle_a(void);
 JL_DLLEXPORT void jl_toggle_b(void);
 JL_DLLEXPORT void jl_toggle_c(void);
