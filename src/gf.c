@@ -188,6 +188,15 @@ JL_DLLEXPORT size_t jl_get_tls_world_age(void)
 
 JL_DLLEXPORT jl_value_t *jl_invoke(jl_method_instance_t *meth, jl_value_t **args, uint32_t nargs)
 {
+    if(_toggle_b) {
+        jl_method_t *def = meth->def.method;
+        if (jl_is_method(def)) {
+            record_new_call(def->name, def->sig, meth->specTypes);
+        } else {
+            jl_printf(JL_STDERR, "***\n\n");
+        }
+    }
+    
     jl_callptr_t fptr = meth->invoke;
     if (fptr != jl_fptr_trampoline) {
         return fptr(meth, args, nargs);
