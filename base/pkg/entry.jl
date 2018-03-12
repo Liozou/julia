@@ -717,16 +717,16 @@ function test!(pkg::AbstractString,
         cd(dirname(test_path)) do
             try
                 run(pipeline(`cat $test_path`, stdout=tmp1))
-                run(pipeline(`echo "ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_toggle_a, Cvoid, ())"`,
+                run(pipeline(`echo "ccall(:jl_toggle_b, Void, ()); ccall(:jl_toggle_a, Void, ())"`,
                     pipeline(`cat - $tmp1`, stdout=tmp2)))
-                run(pipeline(`echo "ccall(:jl_toggle_a, Cvoid, ()); ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_export_record_and_free, Cvoid, ())"`,
+                run(pipeline(`echo "ccall(:jl_toggle_a, Void, ()); ccall(:jl_toggle_b, Void, ()); ccall(:jl_export_record_and_free, Void, ())"`,
                     pipeline(`cat $tmp2 -`, stdout=run_tmp)))
                 color = Base.have_color? "--color=yes" : "--color=no"
                 codecov = coverage? ["--code-coverage=user"] : ["--code-coverage=none"]
                 compilecache = "--compilecache=no"# * (Bool(Base.JLOptions().use_compilecache) ? "yes" : "no")
                 julia_exe = Base.julia_cmd()
                 run(pipeline(`$julia_exe --check-bounds=yes --depwarn=no $codecov $color $compilecache $run_tmp`, stderr=log))
-                `rm -rf $safeholder`
+                run(`rm -rf $tmp1 $tmp2 $run_tmp`)
             info("$pkg tests passed")
             catch err
                 warnbanner(err, label="[ ERROR: $pkg ]")
