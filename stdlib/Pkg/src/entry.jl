@@ -714,19 +714,30 @@ function test!(pkg::AbstractString,
         push!(notests, pkg)
     else
         @info "Testing $pkg"
+        log = pwd(); log = "$log/$pkg.log"
+        println("$log")
+        tmp1 = "$test_path.tmp1"
+        tmp2 = "$test_path.tmp2"
+        run_tmp = "$test_path.tmp3.jl"
         cd(dirname(test_path)) do
             try
-                cmd = ```
+                run(pipeline(`cat $test_path`, stdout=tmp1))
+                run(pipeline(`echo "ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_toggle_a, Cvoid, ())"`,
+                    pipeline(`cat - $tmp1`, stdout=tmp2)))
+                run(pipeline(`echo "ccall(:jl_toggle_a, Cvoid, ()); ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_export_record_and_free, Cvoid, ())"`,
+                    pipeline(`cat $tmp2 -`, stdout=run_tmp)))
+                run(pipeline(```
                     $(Base.julia_cmd())
                     --code-coverage=$(coverage ? "user" : "none")
                     --color=$(Base.have_color ? "yes" : "no")
-                    --compiled-modules=$(Bool(Base.JLOptions().use_compiled_modules) ? "yes" : "no")
+                    --compiled-modules="no"
                     --check-bounds=yes
-                    --warn-overwrite=yes
+                    --warn-overwrite=no
+                    --depwarn=no
+                    --compile=no
                     --startup-file=$(Base.JLOptions().startupfile != 2 ? "yes" : "no")
-                    $test_path
-                    ```
-                run(cmd)
+                    $run_tmp
+                    ```, stderr=log))
                 @info "$pkg tests passed"
             catch err
                 @error """
