@@ -708,15 +708,26 @@ function test!(pkg::AbstractString,
     elseif !isfile(test_path)
         push!(notests, pkg)
     else
-        info("Testing $pkg")
+        @info "Testing $pkg"
+        log = pwd(); log = "$log/$pkg.log"
+        println("$log")
+        tmp1 = "$test_path.tmp1"
+        tmp2 = "$test_path.tmp2"
+        run_tmp = "$test_path.tmp3.jl"
         cd(dirname(test_path)) do
             try
+                run(pipeline(`cat $test_path`, stdout=tmp1))
+                run(pipeline(`echo "ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_toggle_a, Cvoid, ())"`,
+                    pipeline(`cat - $tmp1`, stdout=tmp2)))
+                run(pipeline(`echo "ccall(:jl_toggle_a, Cvoid, ()); ccall(:jl_toggle_b, Cvoid, ()); ccall(:jl_export_record_and_free, Cvoid, ())"`,
+                    pipeline(`cat $tmp2 -`, stdout=run_tmp)))
                 color = Base.have_color? "--color=yes" : "--color=no"
                 codecov = coverage? ["--code-coverage=user"] : ["--code-coverage=none"]
-                compilecache = "--compilecache=" * (Bool(Base.JLOptions().use_compilecache) ? "yes" : "no")
+                compilecache = "--compilecache=no"# * (Bool(Base.JLOptions().use_compilecache) ? "yes" : "no")
                 julia_exe = Base.julia_cmd()
-                run(`$julia_exe --check-bounds=yes $codecov $color $compilecache $test_path`)
-                info("$pkg tests passed")
+                run(pipeline(`$julia_exe --check-bounds=yes --depwarn=no $codecov $color $compilecache $run_tmp`, stderr=log))
+                `rm -rf $safeholder`
+            @info "$pkg tests passed"
             catch err
                 warnbanner(err, label="[ ERROR: $pkg ]")
                 push!(errs,pkg)
