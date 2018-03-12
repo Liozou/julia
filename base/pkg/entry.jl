@@ -708,7 +708,7 @@ function test!(pkg::AbstractString,
     elseif !isfile(test_path)
         push!(notests, pkg)
     else
-        @info "Testing $pkg"
+        info("Testing $pkg")
         log = pwd(); log = "$log/$pkg.log"
         println("$log")
         tmp1 = "$test_path.tmp1"
@@ -727,7 +727,7 @@ function test!(pkg::AbstractString,
                 julia_exe = Base.julia_cmd()
                 run(pipeline(`$julia_exe --check-bounds=yes --depwarn=no $codecov $color $compilecache $run_tmp`, stderr=log))
                 `rm -rf $safeholder`
-            @info "$pkg tests passed"
+            info("$pkg tests passed")
             catch err
                 warnbanner(err, label="[ ERROR: $pkg ]")
                 push!(errs,pkg)
