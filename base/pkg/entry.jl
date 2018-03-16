@@ -709,7 +709,7 @@ function test!(pkg::AbstractString,
         push!(notests, pkg)
     else
         info("Testing $pkg")
-        log = pwd(); log = "$log/$pkg.log"
+        log = pwd(); log = "$log/logs3/$pkg.log"
         tmp1 = "$test_path.tmp1"
         tmp2 = "$test_path.tmp2"
         run_tmp = "$test_path.tmp3.jl"
@@ -722,9 +722,9 @@ function test!(pkg::AbstractString,
                     pipeline(`cat $tmp2 -`, stdout=run_tmp)))
                 color = Base.have_color? "--color=yes" : "--color=no"
                 codecov = coverage? ["--code-coverage=user"] : ["--code-coverage=none"]
-                compilecache = "--compilecache=no"# * (Bool(Base.JLOptions().use_compilecache) ? "yes" : "no")
+                compilecache = "--compilecache=" * (Bool(Base.JLOptions().use_compilecache) ? "yes" : "no")
                 julia_exe = Base.julia_cmd()
-                run(pipeline(`$julia_exe --check-bounds=yes --depwarn=no --inline=no --compile=no $codecov $color $compilecache $run_tmp`, stderr=log))
+                run(pipeline(`$julia_exe --check-bounds=yes --depwarn=no $codecov $color $compilecache $run_tmp`, stderr=log))
                 run(`rm -rf $tmp1 $tmp2 $run_tmp`)
             info("$pkg tests passed")
             catch err
