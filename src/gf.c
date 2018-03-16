@@ -39,7 +39,7 @@ JL_DLLEXPORT void jl_toggle_e(void) { _toggle_e = !_toggle_e; }
 typedef struct _hash_calls {
     uintptr_t id_calls;
     jl_value_t *specTypes;
-    int* count;
+    unsigned long* count;
     UT_hash_handle hh;
 } hash_calls;
 
@@ -86,7 +86,7 @@ hash_calls* add_hashed_call(jl_value_t *specTypes, hash_methods *method)
     hash_calls *new_call = (hash_calls*)malloc(sizeof(hash_calls));
     new_call->specTypes = specTypes;
     new_call->id_calls = jl_object_id(specTypes);
-    new_call->count = (int*)malloc(sizeof(int));
+    new_call->count = (unsigned long*)malloc(sizeof(unsigned long));
     *(new_call->count) = 0;
     HASH_ADD(hh, *(method->calls), id_calls, sizeof(uintptr_t), new_call);
     return new_call;
@@ -127,7 +127,7 @@ JL_DLLEXPORT hash_functions* jl_export_record(void)
             for(hash_calls* c = *(m->calls); c != NULL; c = (hash_calls*)c->hh.next) {
                 jl_printf(JL_STDERR, " ");
                 jl_(c->specTypes);
-                jl_printf(JL_STDERR, "%d\n", *(c->count));
+                jl_printf(JL_STDERR, "%lu\n", *(c->count));
             }
         }
     }
@@ -151,7 +151,7 @@ JL_DLLEXPORT void jl_export_record_and_free(void)
             for(; c != NULL; c = c_next) {
                 jl_printf(JL_STDERR, " ");
                 jl_(c->specTypes);
-                jl_printf(JL_STDERR, "%d\n", *(c->count));
+                jl_printf(JL_STDERR, "%lu\n", *(c->count));
                 c_next = (hash_calls*)c->hh.next;
                 free(c->count);
                 free(c);
