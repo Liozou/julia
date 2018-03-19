@@ -393,7 +393,6 @@ void jl_mk_builtin_func(jl_datatype_t *dt, const char *name, jl_fptr_t fptr)
 // if inference doesn't occur (or can't finish), returns NULL instead
 jl_code_info_t *jl_type_infer(jl_method_instance_t **pli, size_t world, int force)
 {
-    return NULL;
     JL_TIMING(INFERENCE);
     if (jl_typeinf_func == NULL)
         return NULL;
