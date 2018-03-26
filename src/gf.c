@@ -47,13 +47,19 @@ typedef struct _hash_methods {
     uintptr_t id_methods;
     jl_value_t *signature;
     hash_calls** calls;
-    UT_hash_handle hh; // makes this structure hashable
+    UT_hash_handle hh;
 } hash_methods;
+
+typedef struct _hash_callsites {
+    uint32_t id;
+    hash_methods** methods;
+    UT_hash_handle hh; // makes this structure hashable
+} hash_callsites;
 
 typedef struct _hash_functions {
     jl_sym_t *name;
-    hash_methods** methods; // pointer to the hashtable of the methods
-    UT_hash_handle hh;
+    hash_callsites** callsites; // pointer to the hashtable of the callsites
+    UT_hash_handle hh; // makes this structure hashable
 } hash_functions;
 
 hash_functions *record = NULL;
@@ -62,14 +68,25 @@ hash_functions* add_hashed_function(jl_sym_t *name)
 {
     hash_functions* new_function =  (hash_functions*)malloc(sizeof(hash_functions));
     new_function->name = name;
-    hash_methods** p_methods = (hash_methods**)malloc(sizeof(hash_methods*));
-    *p_methods = NULL;
-    new_function->methods = p_methods;
+    hash_callsites** p_callsites = (hash_callsites**)malloc(sizeof(hash_callsites*));
+    *p_callsites = NULL;
+    new_function->callsites = p_callsites;
     HASH_ADD_KEYPTR(hh, record, name, sizeof(jl_sym_t), new_function);
     return new_function;
 }
 
-hash_methods* add_hashed_method(jl_value_t *signature, hash_functions *function)
+hash_callsites* add_hashed_callsite(uint32_t id, hash_functions *function)
+{
+    hash_callsites *new_callsite = (hash_callsites*)malloc(sizeof(hash_callsites));
+    new_callsite->id = id;
+    hash_methods** p_methods = (hash_methods**)malloc(sizeof(hash_methods*));
+    *p_methods = NULL;
+    new_callsite->methods = p_methods;
+    HASH_ADD(hh, *(function->callsites), id, sizeof(uint32_t), new_callsite);
+    return new_callsite;
+}
+
+hash_methods* add_hashed_method(jl_value_t *signature, hash_callsites *callsite)
 {
     hash_methods *new_method = (hash_methods*)malloc(sizeof(hash_methods));
     new_method->signature = signature;
@@ -77,7 +94,7 @@ hash_methods* add_hashed_method(jl_value_t *signature, hash_functions *function)
     hash_calls** p_calls = (hash_calls**)malloc(sizeof(hash_calls*));
     *p_calls = NULL;
     new_method->calls = p_calls;
-    HASH_ADD(hh, *(function->methods), id_methods, sizeof(uintptr_t), new_method);
+    HASH_ADD(hh, *(callsite->methods), id_methods, sizeof(uintptr_t), new_method);
     return new_method;
 }
 
@@ -92,19 +109,24 @@ hash_calls* add_hashed_call(jl_value_t *specTypes, hash_methods *method)
     return new_call;
 }
 
-JL_DLLEXPORT void record_new_call(jl_sym_t *name, jl_value_t *signature, jl_value_t *specTypes)
+JL_DLLEXPORT void record_new_call(jl_sym_t *name, uint32_t callsite_id, jl_value_t *signature, jl_value_t *specTypes)
 {
     hash_functions *function = (hash_functions*)malloc(sizeof(hash_functions));
+    hash_callsites *callsite = (hash_callsites*)malloc(sizeof(hash_callsites));
     hash_methods *method = (hash_methods*)malloc(sizeof(hash_methods));
     hash_calls *call = (hash_calls*)malloc(sizeof(hash_calls));
     HASH_FIND(hh, record, name, sizeof(jl_sym_t), function);
     if(!function) {
         function = add_hashed_function(name);
     }
+    HASH_FIND(hh, *(function->callsites), &callsite_id, sizeof(uint32_t), callsite);
+    if(!callsite) {
+        callsite = add_hashed_callsite(callsite_id, function);
+    }
     uintptr_t id_signature = jl_object_id(signature);
-    HASH_FIND(hh, *(function->methods), &id_signature, sizeof(uintptr_t), method);
+    HASH_FIND(hh, *(callsite->methods), &id_signature, sizeof(uintptr_t), method);
     if(!method) {
-        method = add_hashed_method(signature, function);
+        method = add_hashed_method(signature, callsite);
     }
     uintptr_t id_specTypes = jl_object_id(specTypes);
     HASH_FIND(hh, *(method->calls), &id_specTypes, sizeof(uintptr_t), call);
@@ -112,8 +134,6 @@ JL_DLLEXPORT void record_new_call(jl_sym_t *name, jl_value_t *signature, jl_valu
         call = add_hashed_call(specTypes, method);
     }
     *(call->count) = *(call->count) + 1;
-
-    //jl_(specTypes);
 }
 
 JL_DLLEXPORT hash_functions* jl_export_record(void)
@@ -121,13 +141,16 @@ JL_DLLEXPORT hash_functions* jl_export_record(void)
     for(hash_functions *f = record; f != NULL; f = (hash_functions*)f->hh.next) {
         jl_printf(JL_STDERR, "\n");
         jl_(f->name);
-        for(hash_methods* m = *(f->methods); m != NULL; m = (hash_methods*)m->hh.next) {
-            jl_printf(JL_STDERR, "$");
-            jl_(m->signature);
-            for(hash_calls* c = *(m->calls); c != NULL; c = (hash_calls*)c->hh.next) {
-                jl_printf(JL_STDERR, " ");
-                jl_(c->specTypes);
-                jl_printf(JL_STDERR, "%lu\n", *(c->count));
+        for(hash_callsites *s = *(f->callsites); s != NULL; s = (hash_callsites*)s->hh.next) {
+            jl_printf(JL_STDERR, "*%u\n", s->id);
+            for(hash_methods* m = *(s->methods); m != NULL; m = (hash_methods*)m->hh.next) {
+                jl_printf(JL_STDERR, "$");
+                jl_(m->signature);
+                for(hash_calls* c = *(m->calls); c != NULL; c = (hash_calls*)c->hh.next) {
+                    jl_printf(JL_STDERR, " ");
+                    jl_(c->specTypes);
+                    jl_printf(JL_STDERR, "%lu\n", *(c->count));
+                }
             }
         }
     }
@@ -141,30 +164,47 @@ JL_DLLEXPORT void jl_export_record_and_free(void)
     for(; f != NULL; f = f_next) {
         jl_printf(JL_STDERR, "\n");
         jl_(f->name);
-        hash_methods* m = *(f->methods);
-        hash_methods* m_next;
-        for(; m != NULL; m = m_next) {
-            jl_printf(JL_STDERR, "$");
-            jl_(m->signature);
-            hash_calls* c = *(m->calls);
-            hash_calls* c_next;
-            for(; c != NULL; c = c_next) {
-                jl_printf(JL_STDERR, " ");
-                jl_(c->specTypes);
-                jl_printf(JL_STDERR, "%lu\n", *(c->count));
-                c_next = (hash_calls*)c->hh.next;
-                free(c->count);
-                free(c);
+        hash_callsites* s = *(f->callsites);
+        hash_callsites* s_next;
+        for(; s!= NULL; s = s_next) {
+            jl_printf(JL_STDERR, "*%u\n", s->id);
+            hash_methods* m = *(s->methods);
+            hash_methods* m_next;
+            for(; m != NULL; m = m_next) {
+                jl_printf(JL_STDERR, "$");
+                jl_(m->signature);
+                hash_calls* c = *(m->calls);
+                hash_calls* c_next;
+                for(; c != NULL; c = c_next) {
+                    jl_printf(JL_STDERR, " ");
+                    jl_(c->specTypes);
+                    jl_printf(JL_STDERR, "%lu\n", *(c->count));
+                    c_next = (hash_calls*)c->hh.next;
+                    free(c->count);
+                    free(c);
+                }
+                m_next = (hash_methods*)m->hh.next;
+                free(m->calls);
+                free(m);
             }
-            m_next = (hash_methods*)m->hh.next;
-            free(m->calls);
-            free(m);
+            s_next = (hash_callsites*)s->hh.next;
+            free(s->methods);
+            free(s);
         }
         f_next = (hash_functions*)f->hh.next;
-        free(f->methods);
+        free(f->callsites);
         free(f);
     }
     record = NULL;
+}
+
+JL_DLLEXPORT void jl_PRL_begin_record(void) {
+    _toggle_a = 1; _toggle_b = 1;
+}
+
+JL_DLLEXPORT void jl_PRL_end_record(void) {
+    _toggle_a = 0; _toggle_b = 0;
+    jl_export_record_and_free();
 }
 
 // ::ANY has no effect if the number of overlapping methods is greater than this
@@ -185,12 +225,25 @@ JL_DLLEXPORT size_t jl_get_tls_world_age(void)
     return jl_get_ptls_states()->world_age;
 }
 
+static jl_value_t *ml_matches(union jl_typemap_t defs, int offs,
+                              jl_tupletype_t *type, int lim, int include_ambiguous,
+                              size_t world, size_t *min_valid, size_t *max_valid);
+
 JL_DLLEXPORT jl_value_t *jl_invoke(jl_method_instance_t *meth, jl_value_t **args, uint32_t nargs)
 {
+
     if(_toggle_b) {
+        /*
+        jl_datatype_t* dt = jl_first_argument_datatype(meth->specTypes);
+        jl_methtable_t *mt = dt->name->mt;
+        size_t min_valid = meth->def->min_world;
+        size_t max_valid = ~(size_t)0;
+        jl_value_t *potentialMethods =  ml_matches(mt->defs, 0, arg_type_tuple(args, nargs), -1, 0, jl_get_tls_world_age(), &min_valid, &max_valid);
+        jl_printf(JL_STDOUT, "%lu", (jl_array_len((jl_array_t*)potentialMethods)));
+        */
         jl_method_t *def = meth->def;
         if (jl_is_method(def)) {
-            record_new_call(def->name, def->sig, meth->specTypes);
+            record_new_call(def->name, jl_int32hash_fast(jl_return_address()), def->sig, meth->specTypes);
         } else {
             jl_printf(JL_STDERR, "***\n\n");
         }
@@ -2076,15 +2129,45 @@ jl_method_instance_t *jl_lookup_generic(jl_value_t **args, uint32_t nargs, uint3
     return jl_lookup_generic_(args, nargs, callsite, world);
 }
 
+JL_DLLEXPORT void jl_froude(void)
+{
+    jl_eval_string("print('!')");
+}
+
 JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
 {
     jl_method_instance_t *mfunc = jl_lookup_generic_(args, nargs,
                                                      jl_int32hash_fast(jl_return_address()),
                                                      jl_get_ptls_states()->world_age);
+    //
+
+    /*if (mfunc->def->name == jl_symbol("==")) {
+        jl_(mfunc->specTypes);
+    }*/
+    if(_toggle_c) {
+        jl_toggle_c();
+        jl_function_t *count_corresponding_methods = jl_get_function(jl_main_module, "PRL_count_corresponding_methods");
+        jl_value_t* val_count = jl_call2(count_corresponding_methods, (jl_value_t*)mfunc->def->name, (jl_value_t*)mfunc);
+        /*int count = jl_unbox_int64(val_count);
+        jl_printf("%d", count);*/
+        jl_(val_count);
+
+        //char* name = jl_symbol_name(mfunc->def->name);
+        //char* to_exe;
+        //asprintf(&to_exe, "d[\"%s\"] = length(methods(%s).ms)", name, name);
+        //if (asprintf(&to_exe, "") == -1) {
+        //    jl_printf(STDERR, "COULD NOT RECORD\n");
+        //}
+        //jl_printf(JL_STDOUT, "%s\n", to_exe);
+        //jl_eval_string(to_exe);
+        //free(to_exe);
+        jl_toggle_c();
+    }
+
      if(_toggle_a) {
          jl_method_t *def = mfunc->def;
          if (jl_is_method(def)) {
-             record_new_call(def->name, def->sig, mfunc->specTypes);
+             record_new_call(def->name, jl_int32hash_fast(jl_return_address()), def->sig, mfunc->specTypes);
          } else {
              jl_printf(JL_STDERR, "***\n\n");
          }
@@ -2529,6 +2612,7 @@ static jl_value_t *ml_matches(union jl_typemap_t defs, int offs,
         else
             va = NULL;
     }
+
     struct ml_matches_env env;
     env.match.fptr = ml_matches_visitor;
     env.match.type = (jl_value_t*)type;
@@ -2547,6 +2631,7 @@ static jl_value_t *ml_matches(union jl_typemap_t defs, int offs,
     JL_GC_POP();
     *min_valid = env.min_valid;
     *max_valid = env.max_valid;
+
     return env.t;
 }
 
