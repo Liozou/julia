@@ -709,16 +709,24 @@ function test!(pkg::AbstractString,
         push!(notests, pkg)
     else
         info("Testing $pkg")
-        log = pwd(); log = "$log/logs3/$pkg.log"
+        log = "/home/Liozou/JO/logs8/$pkg.log"
+        mkpath(join(split(log, '/')[1:end-1], '/'))
         tmp1 = "$test_path.tmp1"
         tmp2 = "$test_path.tmp2"
         run_tmp = "$test_path.tmp3.jl"
         cd(dirname(test_path)) do
             try
                 run(pipeline(`cat $test_path`, stdout=tmp1))
-                run(pipeline(`echo "ccall(:jl_toggle_b, Void, ()); ccall(:jl_toggle_a, Void, ())"`,
+                run(pipeline(`echo "ccall(:jl_toggle_b, Void, ())
+ccall(:jl_toggle_a, Void, ())"`,
                     pipeline(`cat - $tmp1`, stdout=tmp2)))
-                run(pipeline(`echo "ccall(:jl_toggle_a, Void, ()); ccall(:jl_toggle_b, Void, ()); ccall(:jl_export_record_and_free, Void, ())"`,
+                run(pipeline(`echo "ccall(:jl_toggle_a, Void, ())
+ccall(:jl_toggle_b, Void, ())
+ccall(:jl_export_record_and_free, Void, ())
+flush(STDERR)
+include(\"/home/Liozou/JO/JuliaOverview/analytics/collect_data.jl\")
+analyze_package(\"$pkg\", \"$log\")
+compare_static(\"$pkg\", \"$log\")"`,
                     pipeline(`cat $tmp2 -`, stdout=run_tmp)))
                 color = Base.have_color? "--color=yes" : "--color=no"
                 codecov = coverage? ["--code-coverage=user"] : ["--code-coverage=none"]
