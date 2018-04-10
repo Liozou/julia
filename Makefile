@@ -15,8 +15,38 @@ ifeq ($(JULIA_BINARYDIST_TARNAME),)
 	JULIA_BINARYDIST_TARNAME := julia-$(JULIA_COMMIT)-$(OS)-$(ARCH)
 endif
 
+
 default: $(JULIA_BUILD_MODE) # contains either "debug" or "release"
 all: debug release
+
+
+set-without-devirtualization:
+	cp base/inference_no_devirtualization.jl base/inference.jl
+julia-without-devirtualization: set-without-devirtualization release
+	cp base/inference_with_devirtualization.jl base/inference.jl
+set-without-inference:
+	cp src/gf_no_inference.c gf.c
+juia-without-inference: set-without-inference release
+	cp src/gf_with_inference.c gf.c
+set-without-inlining:
+	cp src/jloptions_no_inline.c src/jloptions.c
+julia-without-inlining: set-without-inlining release
+	cp src/jloptions_O2.c src/jloptions.c
+set-O0:
+	cp src/jloptions_O0.c src/jloptions.c
+julia-O0: set-O0 release
+	cp src/jloptions_O2.c src/jloptions.c
+set-O1:
+	cp src/jloptions_O1.c src/jloptions.c
+julia-O1: set-O1 release
+	cp src/jloptions_O2.c src/jloptions.c
+julia-O2: release
+set-O3:
+	cp src/jloptions_O3.c src/jloptions.c
+julia-O3: set-O3 release
+	cp src/jloptions_O2.c src/jloptions.c
+
+
 
 # sort is used to remove potential duplicates
 DIRS := $(sort $(build_bindir) $(build_depsbindir) $(build_libdir) $(build_private_libdir) $(build_libexecdir) $(build_includedir) $(build_includedir)/julia $(build_sysconfdir)/julia $(build_datarootdir)/julia $(build_man1dir))
