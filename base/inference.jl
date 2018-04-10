@@ -2902,7 +2902,7 @@ function optimize(me::InferenceState)
         # if we start to create `SSAValue` in type inference when not
         # optimizing and use unoptimized IR in codegen.
         gotoifnot_elim_pass!(me)
-        #inlining_pass!(me)
+        inlining_pass!(me)
         void_use_elim_pass!(me)
         alloc_elim_pass!(me)
         getfield_elim_pass!(me)
