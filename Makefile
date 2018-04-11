@@ -25,9 +25,9 @@ set-without-devirtualization:
 julia-without-devirtualization: set-without-devirtualization release
 	cp base/inference_with_devirtualization.jl base/inference.jl
 set-without-inference:
-	cp src/gf_no_inference.c gf.c
-juia-without-inference: set-without-inference release
-	cp src/gf_with_inference.c gf.c
+	cp src/gf_no_inference.c src/gf.c
+julia-without-inference: set-without-inference release
+	cp src/gf_with_inference.c src/gf.c
 set-without-inlining:
 	cp src/jloptions_no_inline.c src/jloptions.c
 julia-without-inlining: set-without-inlining release
