@@ -628,6 +628,14 @@ static void jl_check_static_parameter_conflicts(jl_method_t *m, jl_code_info_t *
     }
 }
 
+JL_DLLEXPORT jl_value_t *jl_new_generic_function_with_binding(jl_sym_t *fname, jl_module_t *mod)
+{
+    jl_binding_t *b = jl_get_binding_for_method_def(mod, fname);
+    jl_value_t **bp = &b->value;
+    jl_value_t *gf = jl_generic_function_def(b->name, b->owner, bp, (jl_value_t*) mod, b);
+    return gf;
+}
+
 // empty generic function def
 JL_DLLEXPORT jl_value_t *jl_generic_function_def(jl_sym_t *name,
                                                  jl_module_t *module,
