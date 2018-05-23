@@ -87,20 +87,20 @@ function grab_frame(func, argtypes)
 end
 
 IRShow = Module(:IRShow, true)
-eval(IRShow, quote
+Core.eval(IRShow, quote
     using Base
     using Base.Meta
     using Core.IR
     const Compiler = Core.Compiler
     using .Compiler: IRCode, ReturnNode, GotoIfNot, CFG, scan_ssa_use!, DomTree, DomTreeNode, Argument
     using Base.Iterators: peek
-    #using AbstractTrees
 end)
-eval(IRShow, quote
+Core.eval(IRShow, quote
     using Base: IdSet
     Compiler.push!(a::IdSet, b) = Base.push!(a, b)
     Base.size(r::Compiler.StmtRange) = Compiler.size(r)
     Base.show(io::IO, r::Compiler.StmtRange) = print(io, Compiler.first(r):Compiler.last(r))
+    Base.display(x::Compiler.StmtRange) = display(Compiler.first(x):Compiler.last(x))
     include(x) = Base.include(IRShow, x)
     include(Base.joinpath(Base.Sys.BINDIR, Base.DATAROOTDIR, "julia", "base", "compiler/ssair/show.jl"))
 
@@ -125,10 +125,24 @@ function -(src::Core.CodeInfo)
     src.code
 end
 
-macro grab_ir(expr)
+macro grab_ir_linetable(expr)
     call = InteractiveUtils.gen_call_with_extracted_types(__module__, Expr(:quote, grab_ir_for), expr)
     quote
         $call
+    end
+end
+
+macro grab_ir(expr)
+    call = InteractiveUtils.gen_call_with_extracted_types(__module__, Expr(:quote, grab_ir_for), expr)
+    quote
+        $call[1]
+    end
+end
+
+macro grab_compacted(expr)
+    call = InteractiveUtils.gen_call_with_extracted_types(__module__, Expr(:quote, grab_ir_for), expr)
+    quote
+        Core.Compiler.compact!($call[1])
     end
 end
 

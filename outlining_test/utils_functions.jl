@@ -10,9 +10,16 @@ function Base.deepcopy(ir::Core.Compiler.IRCode)
 end
 
 
+function new_generic_function(name, line, mod, specTypes)
+    ccall(:jl_new_generic_function_with_binding, Any, (Any, Any),
+        Symbol("#outl#$name#$line#$specTypes"), mod)
+end
+
+
+
 """
 Set a cut at the place where type instability appears.
-Incorrect but help for experiment.
+Incorrect - only use to experiment.
 """
 function add_cut!(ir)
     used_dict = Core.Compiler.IdSet{Int}()
@@ -176,20 +183,27 @@ end
 Enumerate the ssa values that are known to be defined when attaining bb i.
 """
 function existing_ssa_bb(ir, bb, domtree=Core.Compiler.construct_domtree(ir.cfg))
-    ssas = Int()
+    ssas = Int[]
     bb = domtree.idoms[bb]
     while bb!=0
         range = ir.cfg.blocks[bb].stmts
-        append!(ssas, range.first:range.last)
+        for i in range.first:range.last
+            x = ir.stmts[i]
+            if !(x isa Core.Compiler.GotoIfNot || x isa Core.GotoNode ||
+                x isa Core.Compiler.ReturnNode || (x isa Expr &&
+                    (x.head == :leave || x.head == :gc_preserve_end)))
+                push!(ssas, i)
+            end
+        end
         bb = domtree.idoms[bb]
     end
     return ssas
 end
 
 function existing_ssa(ir, i, domtree=Core.Compiler.construct_domtree(ir.cfg))
-    bb::Int = findfirst(x->x>i, ir.cfg.index)
+    bb::Int = findfirst(x -> x>i, ir.cfg.index)
     ssas = existing_ssa_bb(ir, bb, domtree)
-    return append!(ssas, ir.cfg.blocks[bb].stmts.first:i)
+    return append!(ssas, ir.cfg.blocks[bb].stmts.first:(i-1))
 end
 
 
@@ -227,29 +241,91 @@ function find_first_last_loop(code::Vector)
 end
 
 """
-Performs outlining at the given line, under the assumption that it occurs
-before the main loop.
+Erase the instructions before give line and transforms ssa values into arguments
+with position given by args.
 """
-function outline_before_loop(frame, ir, linetable, line)
-    # TODO Check if the line just before is a LineNumberNode, in which case
-    # include it in the outlined function? To check.
-    outlined = new_generic_function(frame.result.linfo.def.name, line, frame.mod)
-    args_int = existing_ssa(ir, line)
-    args = Core.SSAValue[]
-    for i in args_int
-        if i isa Core.Compiler.MaybeUndef
-            return nothing
-        end
-        push!(args, Core.SSAValue(i))
+function cut_and_replace_args!(ir, line, args, initial_nargs)
+    block = Core.Compiler.block_for_inst(ir.cfg, line)
+    if ir.cfg.blocks[block].stmts.first != line
+        error("Outlining required not at beginning of a basic block")
     end
-    nargs = length(args)
-    argdata = Core.svec(Core.svec(typeof(outlined), [Any for _ in 1:nargs]...), Core.svec())
-    src = deepcopy(src)
-    # XXX Check whether it should be nargs or nargs+1 at the next line
-    replace_code_newstyle!(src, ir, nargs, linetable)
-    ccall(:jl_method_def, Nothing, (Any, Any, Any), argdata, src, frame.mod)
+    reverse = Dict{Int, Int}()
+    for i in 1:length(args)
+        reverse[args[i]] = i
+    end
+    # Erase the bypassed instructions
+    for i in 1:(line-1)
+        ir.stmts[i] = nothing # will get compacted by compact!
+    end
+
+    function make_argument(x)
+        if haskey(reverse, x.id)
+            return Core.Compiler.Argument(initial_nargs + reverse[x.id])
+        end
+        return x
+    end
+    for i in 1:length(ir.stmts)
+        ir.stmts[i] = Core.Compiler.ssamap(make_argument, ir.stmts[i])
+    end
+    nothing
 end
 
-function new_generic_function(name, line, mod)
-    ccall(:jl_new_generic_function_with_binding, Any, (Any, Any), Symbol("#outl#$name#$line"), mod)
+
+"""
+Performs outlining above the given line, under the assumption that it occurs
+outside any loop.
+"""
+function outline_outside_loop(frame, ir, linetable, line)
+    # TODO Check if the line just before is a LineNumberNode, in which case
+    # include it in the outlined function? To check.
+    outlined = new_generic_function(frame.result.linfo.def.name, line, frame.mod,
+                                    hash(frame.linfo.specTypes))
+
+    args_int = existing_ssa(ir, line)
+    for x in args_int
+        if x isa Core.Compiler.MaybeUndef
+            return nothing
+        end
+    end
+
+    # Set argtypes: all arguments have no type requirement.
+    initial_nargs = length(frame.linfo.def.sig.parameters)
+    nargs = initial_nargs + length(args_int)
+    argtypes = [Any for _ in 1:(nargs-1)] # The first type will get replaced.
+    #=
+    if Core.Compiler.isvarargtype(frame.linfo.def.sig.parameters[end])
+        # n: number of non-vararg arguments
+        n = length(frame.linfo.def.sig.parameters) - 1
+        # m: number of vararg arguments
+        m = length(frame.linfo.specTypes.parameters) - before_vararg - 1
+        # vartype: type of the vararg arguments
+        vartype = Core.Compiler.unwrap_unionall(frame.linfo.def.sig).parameters[1]
+        # The first argument, typeof(fun), is omitted as it will get replaced.
+        fst = [frame.linfo.def.sig.parameters[i] for i in 2:n]
+        mid = [vartype for _ in 1:m]
+        lst = [Any for _ in 1:length(args)]
+        # argtypes: types of the arguments of the outlined function
+        argtypes = vcat(fst, mid, lst)
+        nargs = n + m + length(args) - 1
+    else
+        n = length(frame.linfo.specTypes.parameters)
+        fst = [frame.linfo.def.sig.parameters[i] for i in 2:n]
+        lst = [Any for _ in 1:length(args)]
+        argtypes = vcat(fst, lst)
+        nargs = n + length(args) - 1
+    end
+    =#
+    argdata = Core.svec(Core.svec(typeof(outlined), argtypes...), Core.svec())
+
+    new_ir = deepcopy(ir)
+    cut_and_replace_args!(new_ir, line, args_int, initial_nargs)
+
+    return new_ir
+
+    src = deepcopy(frame.src)
+    # XXX add names and types for the new variables.
+    # XXX Check whether it should be nargs or nargs+1 at the next line
+    Core.Compiler.replace_code_newstyle!(src, ir, nargs, linetable)
+    src.ssavaluetypes = length(src.ssavaluetypes)
+    #ccall(:jl_method_def, Nothing, (Any, Any, Any), argdata, src, frame.mod)
 end

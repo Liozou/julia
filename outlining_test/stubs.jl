@@ -113,3 +113,31 @@ function my_optimize(me::Core.Compiler.InferenceState)
   end
 end
 =#
+
+## Ex utility from outlining.jl
+
+src = @grab_src +(4)
+src.ssavaluetypes = length(src.ssavaluetypes)
+
+if !(@isdefined count_boo)
+    count_boo = 0
+end
+function regen!(src::Core.CodeInfo)
+    global boo
+    global argdata
+    global count_boo
+    boo = new_generic_function("boo", count_boo+=1, Main, hash(Tuple{Int}))
+    argdata = Core.svec(Core.svec(typeof(boo), Int), Core.svec())
+    ccall(:jl_method_def, Nothing, (Any, Any, Any), argdata, src, Main)
+end
+function regen!(v::Vector)
+    global src
+    src2 = deepcopy(src)
+    src2.code = v
+    regen(src2)
+end
+function regen!()
+    global src
+    regen!(src)
+end
+regen!()

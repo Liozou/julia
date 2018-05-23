@@ -104,3 +104,27 @@ function measles(x)
         return z
     end
 end
+
+function mumps(b, c)
+    if b
+        x = 777
+    end
+    if c
+        return x
+    end
+end
+
+function varargs(x...)
+    if length(x) > 2
+        y = x[1]
+        z = x[2]
+        return varargs(z,y)
+    end
+    if length(x) == 1
+        return x[1]
+    end
+    if isempty(x)
+        return 0
+    end
+    return x[1] - x[2]
+end
