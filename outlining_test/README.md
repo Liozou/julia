@@ -2,6 +2,7 @@
 
 
 ### TODO
+- Consider exception handling.
 - Take care of the new arguments to the function: `substitute!` from optimize.jl
 - Watch out for meta instructions and such (bound checking, ...) that modify
   the behaviour of the function and which must be propagated to the oulined one.

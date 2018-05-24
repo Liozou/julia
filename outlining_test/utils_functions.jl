@@ -12,7 +12,7 @@ end
 
 function new_generic_function(name, line, mod, specTypes)
     ccall(:jl_new_generic_function_with_binding, Any, (Any, Any),
-        Symbol("#outl#$name#$line#$specTypes"), mod)
+        Symbol("outl_$(name)_$(specTypes)_$line"), mod)
 end
 
 
@@ -65,45 +65,6 @@ end
 
 function compact_indirect!(ir, idx)
     return Core.Compiler.compact!(indirect!(ir, idx))
-end
-
-"""
-Cuts the ir at a given line.
-"""
-function cut_bb!(ir, line)
-    # First, add a new bb in the cfg
-    block = Core.Compiler.block_for_inst(ir.cfg, line)
-    insert!(ir.cfg.index, block, line+1) # Start of the next block.
-    bef = ir.cfg.blocks[block]
-    # No successor to the cut block: it should end with a tail call
-    ir.cfg.blocks[block] = Core.Compiler.BasicBlock(
-        Core.Compiler.StmtRange(bef.stmts.first, line), bef.preds, Int[])
-    # As a consequence, no predecessor to the new block.
-    insert!(ir.cfg.blocks, block+1, Core.Compiler.BasicBlock(
-        Core.Compiler.StmtRange(line+1, bef.stmts.last), Int[], bef.succs))
-    patch(x) = x<block ? x : x+1
-    # Second, update the links within cfg: the bbs have to be renumbered.
-    for i in eachindex(ir.cfg.blocks)
-        b = ir.cfg.blocks[i]
-        replace!(patch, b.preds)
-        if i == block-1
-            replace!(x -> x <= block ? x : x+1, b.succs)
-        else
-            replace!(patch, b.succs)
-        end
-    end
-    # Last, update the stmts.
-    for i in eachindex(ir.stmts)
-        e = ir.stmts[i]
-        if e isa Core.GotoNode && e.label >= block
-            ir.stmts[i] = Core.GotoNode(e.label+1)
-        elseif e isa Core.Compiler.GotoIfNot && e.dest >= block
-            ir.stmts[i] = Core.Compiler.GotoIfNot(e.cond, e.dest+1)
-        elseif e isa Core.PhiNode
-            replace!(patch, e.edges)
-        end
-    end
-    nothing
 end
 
 
@@ -240,18 +201,60 @@ function find_first_last_loop(code::Vector)
     return minimum(kept_labels), maximum(kept_gotos)
 end
 
+
+"""
+Cuts the ir at a given line.
+"""
+function cut_bb!(ir, line)
+    block = Core.Compiler.block_for_inst(ir.cfg, line)
+    if ir.cfg.blocks[block].stmts.first == line
+        return block # The line is already at the beginning of a basic block.
+    end
+    # First, add a new bb in the cfg
+    insert!(ir.cfg.index, block, line) # Start of the next block.
+    old = ir.cfg.blocks[block]
+    # No successor to the cut block: it should end with a tail call
+    ir.cfg.blocks[block] = Core.Compiler.BasicBlock(
+        Core.Compiler.StmtRange(old.stmts.first, line-1), old.preds, Int[])
+    # As a consequence, no predecessor to the new block.
+    insert!(ir.cfg.blocks, block+1, Core.Compiler.BasicBlock(
+        Core.Compiler.StmtRange(line, old.stmts.last), Int[], old.succs))
+    patch(x) = x<block ? x : x+1
+    # Second, update the links within cfg: the bbs have to be renumbered.
+    for i in eachindex(ir.cfg.blocks)
+        b = ir.cfg.blocks[i]
+        replace!(patch, b.preds)
+        if i == block-1
+            replace!(x -> x <= block ? x : x+1, b.succs)
+        else
+            replace!(patch, b.succs)
+        end
+    end
+    # Last, update the stmts.
+    for i in eachindex(ir.stmts)
+        e = ir.stmts[i]
+        if e isa Core.GotoNode && e.label >= block
+            ir.stmts[i] = Core.GotoNode(e.label+1)
+        elseif e isa Core.Compiler.GotoIfNot && e.dest >= block
+            ir.stmts[i] = Core.Compiler.GotoIfNot(e.cond, e.dest+1)
+        elseif e isa Core.PhiNode
+            replace!(patch, e.edges)
+        end
+    end
+    return block + 1
+end
+
 """
 Erase the instructions before give line and transforms ssa values into arguments
 with position given by args.
 """
 function cut_and_replace_args!(ir, line, args, initial_nargs)
-    block = Core.Compiler.block_for_inst(ir.cfg, line)
-    if ir.cfg.blocks[block].stmts.first != line
-        error("Outlining required not at beginning of a basic block")
-    end
+    block = cut_bb!(ir, line)
     reverse = Dict{Int, Int}()
     for i in 1:length(args)
-        reverse[args[i]] = i
+        x = args[i]
+        reverse[x] = i
+        push!(ir.argtypes, ir.types[x])
     end
     # Erase the bypassed instructions
     for i in 1:(line-1)
@@ -267,7 +270,26 @@ function cut_and_replace_args!(ir, line, args, initial_nargs)
     for i in 1:length(ir.stmts)
         ir.stmts[i] = Core.Compiler.ssamap(make_argument, ir.stmts[i])
     end
-    nothing
+    return block
+end
+
+"""
+Assuming that no bb before bb_start is reachable, shrink all phi nodes refering
+to such bb.
+"""
+function shrink_phi_nodes(ir, bb_start)
+    bb_start == 1 && return
+    for i in ir.cfg.index[bb_start-1]:length(ir.stmts)
+        x = ir.stmts[i]
+        if x isa Core.PhiNode
+            to_keep = map(edge -> edge >= bb_start, x.edges)
+            if count(to_keep) == 1
+                ir.stmts[i] = x.values[to_keep][1]
+            else
+                ir.stmts[i] = Core.PhiNode(x.edges[to_keep], x.values[to_keep])
+            end
+        end
+    end
 end
 
 
@@ -280,8 +302,10 @@ function outline_outside_loop(frame, ir, linetable, line)
     # include it in the outlined function? To check.
     outlined = new_generic_function(frame.result.linfo.def.name, line, frame.mod,
                                     hash(frame.linfo.specTypes))
+    name = string(outlined)
 
     args_int = existing_ssa(ir, line)
+    println(args_int)
     for x in args_int
         if x isa Core.Compiler.MaybeUndef
             return nothing
@@ -318,14 +342,21 @@ function outline_outside_loop(frame, ir, linetable, line)
     argdata = Core.svec(Core.svec(typeof(outlined), argtypes...), Core.svec())
 
     new_ir = deepcopy(ir)
-    cut_and_replace_args!(new_ir, line, args_int, initial_nargs)
+    block_start = cut_and_replace_args!(new_ir, line, args_int, initial_nargs)
+    shrink_phi_nodes(new_ir, block_start)
 
     return new_ir
 
     src = deepcopy(frame.src)
-    # XXX add names and types for the new variables.
+    splitpoint = (initial_nargs+1):initial_nargs
+    new_names = ["$(name)_$i" for i in args_int]
+    splice!(src.slotnames, splitpoint, new_names)
+    new_types = [ir.types[i] for i in args_int]
+    splice!(src.slottypes, splitpoint, new_types)
+    splice!(src.slotflags, splitpoint, [Compiler.SLOT_ASSIGNEDONCE for i in 1:length(args_int)])
     # XXX Check whether it should be nargs or nargs+1 at the next line
-    Core.Compiler.replace_code_newstyle!(src, ir, nargs, linetable)
+    Core.Compiler.replace_code_newstyle!(src, deepcopy(new_ir), nargs, linetable)
     src.ssavaluetypes = length(src.ssavaluetypes)
-    #ccall(:jl_method_def, Nothing, (Any, Any, Any), argdata, src, frame.mod)
+    ccall(:jl_method_def, Nothing, (Any, Any, Any), argdata, src, frame.mod)
+    return src, new_ir
 end
