@@ -167,8 +167,6 @@ function argextype(@nospecialize(x), src, sptypes::Vector{Any}, slottypes::Vecto
         @assert false "argextype only works on argument-position values"
     elseif isa(x, SlotNumber)
         return slottypes[(x::SlotNumber).id]
-    elseif isa(x, TypedSlot)
-        return (x::TypedSlot).typ
     elseif isa(x, SSAValue)
         return abstract_eval_ssavalue(x::SSAValue, src)
     elseif isa(x, Argument)
@@ -182,6 +180,7 @@ function argextype(@nospecialize(x), src, sptypes::Vector{Any}, slottypes::Vecto
     elseif isa(x, PiNode)
         return x.typ
     else
+        isa(x, TypedSlot) && throw(x)
         return AbstractEvalConstant(x)
     end
 end

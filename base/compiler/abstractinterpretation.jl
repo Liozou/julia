@@ -683,10 +683,10 @@ function abstract_call(@nospecialize(f), fargs::Union{Nothing,Vector{Any}}, argt
             ty = argtypes[4]
             a = ssa_def_slot(fargs[3], sv)
             b = ssa_def_slot(fargs[4], sv)
-            if isa(a, Slot) && slot_id(cnd.var) == slot_id(a)
+            if isa(a, SlotNumber) && slot_id(cnd.var) == slot_id(a)
                 tx = typeintersect(tx, cnd.vtype)
             end
-            if isa(b, Slot) && slot_id(cnd.var) == slot_id(b)
+            if isa(b, SlotNumber) && slot_id(cnd.var) == slot_id(b)
                 ty = typeintersect(ty, cnd.elsetype)
             end
             return tmerge(tx, ty)
@@ -702,7 +702,7 @@ function abstract_call(@nospecialize(f), fargs::Union{Nothing,Vector{Any}}, argt
             # perform very limited back-propagation of type information for `is` and `isa`
             if f === isa
                 a = ssa_def_slot(fargs[2], sv)
-                if isa(a, Slot)
+                if isa(a, SlotNumber)
                     aty = widenconst(argtypes[2])
                     if rt === Const(false)
                         return Conditional(a, Union{}, aty)
@@ -725,7 +725,7 @@ function abstract_call(@nospecialize(f), fargs::Union{Nothing,Vector{Any}}, argt
                 aty = argtypes[2]
                 bty = argtypes[3]
                 # if doing a comparison to a singleton, consider returning a `Conditional` instead
-                if isa(aty, Const) && isa(b, Slot)
+                if isa(aty, Const) && isa(b, SlotNumber)
                     if rt === Const(false)
                         aty = Union{}
                     elseif rt === Const(true)
@@ -735,7 +735,7 @@ function abstract_call(@nospecialize(f), fargs::Union{Nothing,Vector{Any}}, argt
                     end
                     return Conditional(b, aty, bty)
                 end
-                if isa(bty, Const) && isa(a, Slot)
+                if isa(bty, Const) && isa(a, SlotNumber)
                     if rt === Const(false)
                         bty = Union{}
                     elseif rt === Const(true)
@@ -745,10 +745,10 @@ function abstract_call(@nospecialize(f), fargs::Union{Nothing,Vector{Any}}, argt
                     end
                     return Conditional(a, bty, aty)
                 end
-                if isa(b, Slot)
+                if isa(b, SlotNumber)
                     return Conditional(b, bty, bty)
                 end
-                if isa(a, Slot)
+                if isa(a, SlotNumber)
                     return Conditional(a, aty, aty)
                 end
             elseif f === Core.Compiler.not_int
@@ -965,10 +965,12 @@ function abstract_eval(@nospecialize(e), vtypes::VarTable, sv::InferenceState)
         return AbstractEvalConstant((e::QuoteNode).value)
     elseif isa(e, SSAValue)
         return abstract_eval_ssavalue(e::SSAValue, sv.src)
-    elseif isa(e, Slot)
+    elseif isa(e, SlotNumber)
         return vtypes[slot_id(e)].typ
     elseif isa(e, GlobalRef)
         return abstract_eval_global(e.mod, e.name)
+    else
+        isa(e, TypedSlot) && throw(e)
     end
 
     if !isa(e, Expr)
@@ -1053,7 +1055,7 @@ function abstract_eval(@nospecialize(e), vtypes::VarTable, sv::InferenceState)
     elseif e.head === :isdefined
         sym = e.args[1]
         t = Bool
-        if isa(sym, Slot)
+        if isa(sym, SlotNumber)
             vtyp = vtypes[slot_id(sym)]
             if vtyp.typ === Bottom
                 t = Const(false) # never assigned previously
@@ -1076,6 +1078,8 @@ function abstract_eval(@nospecialize(e), vtypes::VarTable, sv::InferenceState)
                     t = Const(true)
                 end
             end
+        else
+            isa(sym, TypedSlot) && throw(sym)
         end
     else
         t = Any
@@ -1226,13 +1230,17 @@ function typeinf_local(frame::InferenceState)
                     t === Bottom && break
                     frame.src.ssavaluetypes[pc] = t
                     lhs = stmt.args[1]
-                    if isa(lhs, Slot)
+                    if isa(lhs, SlotNumber)
                         changes = StateUpdate(lhs, VarState(t, false), changes)
+                    else
+                        isa(lhs, TypedSlot) && throw(lhs)
                     end
                 elseif hd === :method
                     fname = stmt.args[1]
-                    if isa(fname, Slot)
+                    if isa(fname, SlotNumber)
                         changes = StateUpdate(fname, VarState(Any, false), changes)
+                    else
+                        isa(fname, TypedSlot) && throw(fname)
                     end
                 elseif hd === :inbounds || hd === :meta || hd === :loopinfo
                 else

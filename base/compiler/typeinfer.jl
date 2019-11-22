@@ -21,7 +21,7 @@ function typeinf(frame::InferenceState)
         finish(caller)
     end
     # collect results for the new expanded frame
-    results = InferenceResult[ frames[i].result for i in 1:length(frames) ]
+    results = InferenceResult[ caller.result for caller in frames ]
     # empty!(frames)
     min_valid = frame.min_valid
     max_valid = frame.max_valid
@@ -231,13 +231,15 @@ function annotate_slot_load!(e::Expr, vtypes::VarTable, sv::InferenceState, unde
         subex = e.args[i]
         if isa(subex, Expr)
             annotate_slot_load!(subex, vtypes, sv, undefs)
-        elseif isa(subex, Slot)
+        elseif isa(subex, SlotNumber)
             e.args[i] = visit_slot_load!(subex, vtypes, sv, undefs)
+        else
+            isa(subex, TypedSlot) && throw(subex)
         end
     end
 end
 
-function visit_slot_load!(sl::Slot, vtypes::VarTable, sv::InferenceState, undefs::Array{Bool,1})
+function visit_slot_load!(sl::SlotNumber, vtypes::VarTable, sv::InferenceState, undefs::Array{Bool,1})
     id = slot_id(sl)
     s = vtypes[id]
     vt = widenconditional(s.typ)
@@ -266,7 +268,7 @@ function record_slot_assign!(sv::InferenceState)
         if isa(st_i, VarTable) && isa(expr, Expr) && expr.head === :(=)
             lhs = expr.args[1]
             rhs = expr.args[2]
-            if isa(lhs, Slot)
+            if isa(lhs, SlotNumber)
                 vt = widenconst(sv.src.ssavaluetypes[i])
                 if vt !== Bottom
                     id = slot_id(lhs)
@@ -279,6 +281,8 @@ function record_slot_assign!(sv::InferenceState)
                         slottypes[id] = tmerge(otherTy, vt)
                     end
                 end
+            else
+                isa(lhs, TypedSlot) && throw(lhs)
             end
         end
     end
@@ -339,8 +343,10 @@ function type_annotate!(sv::InferenceState)
             # st_i === nothing  =>  unreached statement  (see issue #7836)
             if isa(expr, Expr)
                 annotate_slot_load!(expr, st_i, sv, undefs)
-            elseif isa(expr, Slot)
+            elseif isa(expr, SlotNumber)
                 body[i] = visit_slot_load!(expr, st_i, sv, undefs)
+            else
+                isa(expr, TypedSlot) && throw(expr)
             end
         else
             if isa(expr, Expr) && is_meta_expr_head(expr.head)
