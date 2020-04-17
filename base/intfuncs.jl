@@ -20,25 +20,28 @@ julia> gcd(6,-9)
 3
 ```
 """
-function gcd(a::T, b::T) where T<:Integer
-    while b != 0
-        t = b
-        b = rem(a, b)
-        a = t
+function gcd(a::U, b::V) where {U<:Integer, V<:Integer}
+    T = promote_type(U, V)
+    x = a % T
+    y = b % T
+    while y != 0
+        x, y = y, rem(x, y)
     end
-    checked_abs(a)
+    checked_abs(x) % T
 end
 
 # binary GCD (aka Stein's) algorithm
 # about 1.7x (2.1x) faster for random Int64s (Int128s)
-function gcd(a::T, b::T) where T<:Union{Int8,UInt8,Int16,UInt16,Int32,UInt32,Int64,UInt64,Int128,UInt128}
-    a == 0 && return abs(b)
-    b == 0 && return abs(a)
+function gcd(b::U, a::V) where {U<:BitInteger, V<:BitInteger}
+    T = promote_type(U, V)
+    S = promote_type(unsigned(U), unsigned(V))
+    iszero(a) && return abs(b) % T
+    iszero(b) && return abs(a) % T
     za = trailing_zeros(a)
     zb = trailing_zeros(b)
     k = min(za, zb)
-    u = unsigned(abs(a >> za))
-    v = unsigned(abs(b >> zb))
+    u = unsigned(abs(a >> za)) % S
+    v = unsigned(abs(b >> zb)) % S
     while u != v
         if u > v
             u, v = v, u
@@ -71,12 +74,13 @@ julia> lcm(-2,3)
 6
 ```
 """
-function lcm(a::T, b::T) where T<:Integer
+function lcm(a::U, b::V) where {U<:Integer, V<:Integer}
+    T = promote_type(U, V)
     # explicit a==0 test is to handle case of lcm(0,0) correctly
-    if a == 0
-        return a
+    if iszero(a)
+        return a % T
     else
-        return checked_abs(checked_mul(a, div(b, gcd(b,a))))
+        return checked_abs(checked_mul(a, div(b, gcd(b,a)))) % T
     end
 end
 
@@ -136,18 +140,21 @@ julia> gcdx(240, 46)
     their `typemax`, and the identity then holds only via the unsigned
     integers' modulo arithmetic.
 """
-function gcdx(a::T, b::T) where T<:Integer
+function gcdx(a::U, b::V) where {U<:Integer, V<:Integer}
+    T = promote_type(U, V)
     # a0, b0 = a, b
     s0, s1 = oneunit(T), zero(T)
     t0, t1 = s1, s0
+    x = a % T
+    y = b % T
     # The loop invariant is: s0*a0 + t0*b0 == a
-    while b != 0
-        q = div(a, b)
-        a, b = b, rem(a, b)
+    while y != 0
+        q = div(x, y)
+        x, y = y, rem(x, y)
         s0, s1 = s1, s0 - q*s1
         t0, t1 = t1, t0 - q*t1
     end
-    a < 0 ? (-a, -s0, -t0) : (a, s0, t0)
+    x < 0 ? (-x, -s0, -t0) : (x, s0, t0)
 end
 gcdx(a::Real, b::Real) = gcdx(promote(a,b)...)
 gcdx(a::T, b::T) where T<:Real = throw(MethodError(gcdx, (a,b)))
@@ -173,17 +180,19 @@ julia> invmod(5,6)
 5
 ```
 """
-function invmod(n::T, m::T) where T<:Integer
+function invmod(n::Integer, m::Integer)
+    m == 0 && __throw_invmod_mzero(m)
     g, x, y = gcdx(n, m)
-    g != 1 && throw(DomainError((n, m), "Greatest common divisor is $g."))
-    m == 0 && throw(DomainError(m, "`m` must not be 0."))
+    g != 1 && __throw_invmod_gnotone(n, m, g)
     # Note that m might be negative here.
     # For unsigned T, x might be close to typemax; add m to force a wrap-around.
     r = mod(x + m, m)
     # The postcondition is: mod(r * n, m) == mod(T(1), m) && div(r, m) == 0
     r
 end
-invmod(n::Integer, m::Integer) = invmod(promote(n,m)...)
+@noinline __throw_invmod_mzero(m) = throw(DomainError(m, "`m` must not be 0."))
+@noinline __throw_invmod_gnotone(n, m, g) = throw(DomainError((n, m), "Greatest common divisor is $g."))
+
 
 # ^ for any x supporting *
 to_power_type(x) = convert(Base._return_type(*, Tuple{typeof(x), typeof(x)}), x)
@@ -235,7 +244,6 @@ function power_by_squaring(x::Bool, p::Integer)
     return (p==0) | x
 end
 
-^(x::T, p::T) where {T<:Integer} = power_by_squaring(x,p)
 ^(x::Number, p::Integer)  = power_by_squaring(x,p)
 
 # x^p for any literal integer p is lowered to Base.literal_pow(^, x, Val(p))
