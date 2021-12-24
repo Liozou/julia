@@ -553,7 +553,15 @@ function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_modul
 end
 
 function complete_methods!(out::Vector{Completion}, @nospecialize(func), args_ex::Vector{Any}, kwargs_ex::Vector{Pair{Symbol,Any}}, moreargs::Bool=true)
-    ml = methods(func)
+    all_args_ex = if !isempty(args_ex) && typeof(last(args_ex)) === Core.TypeofVararg
+        args_ex
+    else
+        _all_args_ex = copy(args_ex)
+        push!(_all_args_ex, Vararg{Any})
+        _all_args_ex
+    end
+    ml = methods(func, all_args_ex)
+
     # Input types and number of arguments
     if isempty(kwargs_ex)
         t_in = Tuple{Core.Typeof(func), args_ex...}
@@ -566,7 +574,8 @@ function complete_methods!(out::Vector{Completion}, @nospecialize(func), args_ex
         t_in = Tuple{Core.Typeof(kwfunc), kwargt, Core.Typeof(func), args_ex...}
         na = length(t_in.parameters)::Int
         orig_ml = ml # this method is supposed to be used for printing
-        ml = methods(kwfunc)
+        pushfirst!(all_args_ex, Any)
+        ml = methods(kwfunc, all_args_ex)
         func = kwfunc
     end
     if !moreargs
