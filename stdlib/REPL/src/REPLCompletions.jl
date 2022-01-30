@@ -544,7 +544,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
 
     seen = Base.IdSet()
     for name in names(callee_module; all=true)
-        if !Base.isdeprecated(callee_module, name) && isdefined(callee_module, name)
+        if !Base.isdeprecated(callee_module, name) && isdefined(callee_module, name) && !startswith(string(name), "#kw")
             func = getfield(callee_module, name)
             if !isa(func, Module)
                 funct = Core.Typeof(func)
@@ -555,7 +555,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
             elseif callee_module === Main && isa(func, Module)
                 callee_module2 = func
                 for name in names(callee_module2)
-                    if !Base.isdeprecated(callee_module2, name) && isdefined(callee_module2, name)
+                    if !Base.isdeprecated(callee_module2, name) && isdefined(callee_module2, name) && !startswith(string(name), "#kw")
                         func = getfield(callee_module, name)
                         if !isa(func, Module)
                             funct = Core.Typeof(func)
@@ -585,30 +585,32 @@ end
 
 function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_module::Module, default_any::Bool, allow_broadcasting::Bool)
     args_ex = Any[]
-    kwargs_ex = false
+    kwargs_ex = Symbol[]
     if allow_broadcasting && ex_org.head === :. && ex_org.args[2] isa Expr
         # handle broadcasting, but only handle number of arguments instead of
         # argument types
-        for _ in (ex_org.args[2]::Expr).args
-            push!(args_ex, Any)
-        end
+        append!(args_ex, Any for _ in (ex_org.args[2]::Expr).args)
     else
         for ex in funargs
             if isexpr(ex, :parameters)
-                if !isempty(ex.args)
-                    kwargs_ex = true
+                for x in ex.args
+                    n = isexpr(x, :kw) ? first(x.args) : x
+                    n isa Symbol || continue # happens if the current arg is splat
+                    push!(kwargs_ex, n)
                 end
             elseif isexpr(ex, :kw)
-                kwargs_ex = true
+                n = first(ex.args)
+                n isa Symbol || continue # happens if the current arg is splat
+                push!(kwargs_ex, n)
             else
                 push!(args_ex, get_type(get_type(ex, context_module)..., default_any))
             end
         end
     end
-    return args_ex, kwargs_ex
+    return args_ex, Set{Symbol}(kwargs_ex)
 end
 
-function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_ex::Vector{Any}, kwargs_ex::Bool, max_method_completions::Int)
+function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_ex::Vector{Any}, kwargs_ex::Set{Symbol}, max_method_completions::Int)
     # Input types and number of arguments
     t_in = Tuple{funct, args_ex...}
     m = Base._methods_by_ftype(t_in, nothing, max_method_completions, Base.get_world_counter(),
@@ -618,7 +620,19 @@ function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_e
     end
     m isa Vector || return
     for match in m
-        # TODO: if kwargs_ex, filter out methods without kwargs?
+        if !isempty(kwargs_ex)
+            possible_kwargs = Base.kwarg_decl(match.method)
+            slurp = false
+            for _kw in possible_kwargs
+                if endswith(String(_kw), "...")
+                    slurp = true
+                    break
+                end
+            end
+            # Only suggest a method if it can accept all the kwargs already present in
+            # the call, or if it slurps keyword arguments
+            slurp || kwargs_ex ⊆ possible_kwargs || continue
+        end
         push!(out, MethodCompletion(match.spec_types, match.method))
     end
 end
@@ -814,7 +828,7 @@ function completions(string::String, pos::Int, context_module::Module=Main, shif
     ok && return ret
 
     # Make sure that only bslash_completions is working on strings
-    inc_tag==:string && return Completion[], 0:-1, false
+    inc_tag === :string && return Completion[], 0:-1, false
     if inc_tag === :other && should_method_complete(partial)
         frange, method_name_end = find_start_brace(partial)
         # strip preceding ! operator

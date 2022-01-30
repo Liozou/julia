@@ -633,6 +633,15 @@ let s = "CompletionFoo.?()"
     @test occursin("test10(s::String...)", c[1])
 end
 
+let s = "CompletionFoo.?(; y=2, "
+    c, r, res = test_complete(s)
+    @test !res
+    @test occursin("kwtest(", c[1])
+    @test !any(str->occursin(r"^test", str), c)
+    # kwtest2 should not appear since the number of args if wrong, but we don't currently handle this
+    @test_broken length(c) == 1
+end
+
 #################################################################
 
 # Test method completion with varargs
