@@ -103,6 +103,14 @@ let ex = quote
 
         kwtest(; x=1, y=2, w...) = pass
         kwtest2(a; x=1, y=2, w...) = pass
+        kwtest3(a::Number; length, len2, foobar, kwargs...) = pass
+        kwtest3(a::Real; another!kwarg, len2) = pass
+        kwtest3(a::Integer; namedarg, foobar, slurp...) = pass
+        kwtest4(a::AbstractString; _a1b, x23) = pass
+        kwtest4(a::String; _a1b, xαβγ) = pass
+        kwtest4(a::SubString; x23, _something) = pass
+
+        const named = (; len2=3)
 
         array = [1, 1]
         varfloat = 0.1
@@ -787,6 +795,13 @@ let s = "CompletionFoo.test6()[1](CompletionFoo.Test_y(rand())).y"
     @test c[1] == "yy"
 end
 
+let s = "CompletionFoo.named."
+    c, r = test_complete(s)
+    @test length(c) == 1
+    @test r == (lastindex(s) + 1):lastindex(s)
+    @test c[1] == "len2"
+end
+
 # Test completion in multi-line comments
 let s = "#=\n\\alpha"
     c, r, res = test_complete(s)
@@ -1256,6 +1271,97 @@ test_dict_completion("test_repl_comp_customdict")
     @test "testcmd`" in c
     c, r, res = test_complete("CompletionFoo.tϵsτc")
     @test "tϵsτcmδ`" in c
+end
+
+@testset "Keyword-argument completion" begin
+    c, r = test_complete("CompletionFoo.kwtest3(a;foob")
+    @test c == ["foobar="]
+    c, r = test_complete("CompletionFoo.kwtest3(a; le")
+    @test "length" ∈ c # provide this kind of completion in case the user wants to splat a variable
+    @test "length=" ∈ c
+    @test "len2=" ∈ c
+    @test "len2" ∉ c
+    c, r = test_complete("CompletionFoo.kwtest3.(a;\nlength")
+    @test "length" ∈ c
+    @test "length=" ∈ c
+    c, r = test_complete("CompletionFoo.kwtest3(a, length=4, l")
+    @test "length" ∈ c
+    @test "length=" ∉ c # since it was already used, do not suggest it again
+    @test "len2=" ∈ c
+    c, r = test_complete("CompletionFoo.kwtest3(a; kwargs..., fo")
+    @test "foreach" ∈ c # provide this kind of completion in case the user wants to splat a variable
+    @test "foobar=" ∈ c
+    c, r = test_complete("CompletionFoo.kwtest3(a; another!kwarg=0, le")
+    @test "length" ∈ c
+    @test "length=" ∈ c # the first method could be called and `anotherkwarg` slurped
+    @test "len2=" ∈ c
+    c, r = test_complete("CompletionFoo.kwtest3(a; another!")
+    @test c == ["another!kwarg="]
+    c, r = test_complete("CompletionFoo.kwtest3(a; another!kwarg=0, foob")
+    @test c == ["foobar="] # the first method could be called and `anotherkwarg` slurped
+    c, r = test_complete("CompletionFoo.kwtest3(a; namedarg=0, foob")
+    @test c == ["foobar="]
+
+    # Check for confusion with CompletionFoo.named
+    c, r = test_complete_foo("kwtest3(blabla; unknown=4, namedar")
+    @test c == ["namedarg="]
+    c, r = test_complete_foo("kwtest3(blabla; named")
+    @test "named" ∈ c
+    @test "namedarg=" ∈ c
+    @test "len2" ∉ c
+    c, r = test_complete_foo("kwtest3(blabla; named.")
+    @test c == ["len2"]
+    c, r = test_complete_foo("kwtest3(blabla; named..., another!")
+    @test c == ["another!kwarg="]
+    c, r = test_complete_foo("kwtest3(blabla; named..., len")
+    @test "length" ∈ c
+    @test "length=" ∈ c
+    @test "len2=" ∈ c
+    c, r = test_complete_foo("kwtest3(1+3im; named")
+    @test "named" ∈ c
+    @test "namedarg=" ∉ c
+    @test "len2" ∉ c
+    c, r = test_complete_foo("kwtest3(1+3im; named.")
+    @test c == ["len2"]
+
+    c, r = test_complete("CompletionFoo.kwtest4(a; x23=0, _")
+    @test "_a1b=" ∈ c
+    @test "_something=" ∈ c
+    c, r = test_complete("CompletionFoo.kwtest4(a; xαβγ=1, _")
+    @test "_a1b=" ∈ c
+    @test "_something=" ∉ c # no such keyword for the method with keyword `xαβγ`
+    c, r = test_complete("CompletionFoo.kwtest4(a; x23=0, x")
+    @test "x23=" ∉ c
+    @test "xαβγ=" ∉ c
+    c, r = test_complete("CompletionFoo.kwtest4(a; _a1b=1, x")
+    @test "x23=" ∈ c
+    @test "xαβγ=" ∈ c
+
+
+    # return true if no completion suggests a keyword argument
+    function hasnokwsuggestions(str)
+        c, _ = test_complete(str)
+        return !any(x -> endswith(x, r"[a-z]="), c)
+    end
+    @test hasnokwsuggestions("Completio")
+    @test hasnokwsuggestions("CompletionFoo.kwt")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a;")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; len2=")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; len2=le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; len2=3 ")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; [le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3([length; le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; (le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; foo(le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; (; le")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; length, ")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; kwargs..., ")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(a; unknown=4, another!kw") # only methods 1 and 3 could slurp `unknown`
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(1+3im; nameda")
+    @test hasnokwsuggestions("CompletionFoo.kwtest3(12//7; foob") # because of specificity
 end
 
 # Test completion in context

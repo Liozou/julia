@@ -59,6 +59,10 @@ struct DictCompletion <: Completion
     key::String
 end
 
+struct KeywordArgumentCompletion <: Completion
+    kwarg::String
+end
+
 # interface definition
 function Base.getproperty(c::Completion, name::Symbol)
     if name === :text
@@ -85,6 +89,8 @@ function Base.getproperty(c::Completion, name::Symbol)
         return getfield(c, :text)::String
     elseif name === :key
         return getfield(c, :key)::String
+    elseif name === :kwarg
+        return getfield(c, :kwarg)::String
     end
     return getfield(c, name)
 end
@@ -100,6 +106,7 @@ _completion_text(c::MethodCompletion) = repr(c.method)
 _completion_text(c::BslashCompletion) = c.bslash
 _completion_text(c::ShellCompletion) = c.text
 _completion_text(c::DictCompletion) = c.key
+_completion_text(c::KeywordArgumentCompletion) = c.kwarg*'='
 
 completion_text(c) = _completion_text(c)::String
 
@@ -746,6 +753,75 @@ end
     return matches
 end
 
+# provide completion for keyword arguments in function calls
+function complete_keyword_argument(partial, last_idx, context_module)
+    fail = Completion[], 0:-1
+
+    # Quickly abandon if the situation does not look like the completion of a kwarg
+    idx_last_punct = something(findprev(x -> ispunct(x) && x != '_' && x != '!', partial, last_idx), 0)::Int
+    idx_last_punct == 0 && return fail
+    last_punct = partial[idx_last_punct]
+    last_punct == ',' || last_punct == ';' || last_punct == '(' || return fail
+    before_last_word_start = something(findprev(in(non_identifier_chars), partial, last_idx), 0)
+    before_last_word_start == 0 && return fail
+    all(isspace, partial[nextind(partial, idx_last_punct):before_last_word_start]) || return fail
+    frange, method_name_end = find_start_brace(partial[1:idx_last_punct])
+    method_name_end ∈ frange || return fail
+
+    # At this point, we are guaranteed to be in a set of parentheses, possibly a function
+    # call, and the last word (currently being completed) has no internal dot (i.e. of the
+    # form "foo.bar") and is directly preceded by `last_punct` (one of ',', ';' or '(').
+    # Now, check that we are indeed in a function call
+    frange = first(frange):(last_punct==';' ? prevind(partial, idx_last_punct) : idx_last_punct)
+    s = replace(partial[frange], r"\!+([^=\(]+)" => s"\1") # strip preceding ! operator
+    ex = Meta.parse(s * ')', raise=false, depwarn=false)
+    isa(ex, Expr) || return fail
+    ex.head === :call || (ex.head === :. && ex.args[2] isa Expr && (ex.args[2]::Expr).head === :tuple) || return fail
+
+    # inlined `complete_methods` function since we need the `kwargs_ex` variable
+    func, found = get_value(ex.args[1], context_module)
+    !(found::Bool) && return fail
+    args_ex, kwargs_ex = complete_methods_args(ex.args[2:end], ex, context_module, true, true)
+
+    # Only try to complete as a kwarg if the context makes it clear that the current
+    # argument could be a kwarg (i.e. right after ';' or if there is another kwarg)
+    isempty(kwargs_ex) && last_punct != ';' &&
+        all(x -> !(x isa Expr) || (x.head !== :kw && x.head !== :parameters), ex.args[2:end]) &&
+        return fail
+
+    methods = Completion[]
+    complete_methods!(methods, Core.Typeof(func), args_ex, kwargs_ex, -1)
+
+    # Finally, for each method corresponding to the function call, provide completions
+    # suggestions for each keyword that starts like the last word and that is not already
+    # used previously in the expression. The corresponding suggestion is "kwname="
+    # If the keyword corresponds to an existing name, also include "kwname" as a suggestion
+    # since the syntax `foo(; bar)` is equivalent to `foo(; bar=bar)`
+    wordrange = nextind(partial, before_last_word_start):last_idx
+    last_word = partial[wordrange] # the word to complete
+    kwargs = Set{String}()
+    for m in methods
+        m::MethodCompletion
+        possible_kwargs = Base.kwarg_decl(m.method)
+        current_kwarg_candidates = String[]
+        for _kw in possible_kwargs
+            kw = String(_kw)
+            if !endswith(kw, "...") && startswith(kw, last_word) && _kw ∉ kwargs_ex
+                push!(current_kwarg_candidates, kw)
+            end
+        end
+        union!(kwargs, current_kwarg_candidates)
+    end
+
+    suggestions = Completion[]
+    for kwarg in kwargs
+        push!(suggestions, KeywordArgumentCompletion(kwarg))
+    end
+    append!(suggestions, complete_symbol(last_word, (mod,x)->true, context_module))
+
+    return sort!(suggestions, by=completion_text), wordrange
+end
+
 function project_deps_get_completion_candidates(pkgstarts::String, project_file::String)
     loading_candidates = String[]
     d = Base.parsed_toml(project_file)
@@ -845,6 +921,11 @@ function completions(string::String, pos::Int, context_module::Module=Main, shif
     elseif inc_tag === :comment
         return Completion[], 0:-1, false
     end
+
+    # Check whether we can complete a keyword argument in a function call
+    kwarg_completion, wordrange = complete_keyword_argument(partial, pos, context_module)
+    isempty(wordrange) || return kwarg_completion, wordrange, !isempty(kwarg_completion)
+
 
     dotpos = something(findprev(isequal('.'), string, pos), 0)
     startpos = nextind(string, something(findprev(in(non_identifier_chars), string, pos), 0))
