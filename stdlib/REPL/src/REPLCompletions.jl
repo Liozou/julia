@@ -486,6 +486,8 @@ function try_get_type(sym::Expr, fn::Module)
         return try_get_type(Expr(:call, GlobalRef(Base, :getindex), sym.args...), fn)
     elseif sym.head === :. && sym.args[2] isa QuoteNode # second check catches broadcasting
         return try_get_type(Expr(:call, GlobalRef(Core, :getfield), sym.args...), fn)
+    elseif sym.head === :...
+        return Vararg{Any}, true
     end
     return (Any, false)
 end
@@ -530,9 +532,10 @@ function complete_methods(ex_org::Expr, context_module::Module=Main)
     funct, found = get_type(ex_org.args[1], context_module)::Tuple{Any,Bool}
     !found && return out
 
-    args_ex, kwargs_ex = complete_methods_args(ex_org.args[2:end], ex_org, context_module, true, true)
-    push!(args_ex, Vararg{Any})
-    complete_methods!(out, funct, args_ex, kwargs_ex, MAX_METHOD_COMPLETIONS)
+    args_ex, kwargs_ex, kwargs_flag = complete_methods_args(ex_org.args[2:end], ex_org, context_module, true, true)
+    kwargs_flag == 2 && return out # one of the kwargs is invalid
+    kwargs_flag == 0 && push!(args_ex, Vararg{Any}) # allow more arguments if there is no semicolon
+    complete_methods!(out, funct, args_ex, kwargs_ex, MAX_METHOD_COMPLETIONS, kwargs_flag == 1)
 
     return out
 end
@@ -540,13 +543,17 @@ end
 MAX_ANY_METHOD_COMPLETIONS::Int = 10
 function complete_any_methods(ex_org::Expr, callee_module::Module, context_module::Module, moreargs::Bool, shift::Bool)
     out = Completion[]
-    args_ex, kwargs_ex = try
+    args_ex, kwargs_ex, kwargs_flag = try
         # this may throw, since we set default_any to false
         complete_methods_args(ex_org.args[2:end], ex_org, context_module, false, false)
     catch ex
         ex isa ArgumentError || rethrow()
         return out
     end
+    kwargs_flag == 2 && return out # one of the kwargs is invalid
+
+    # moreargs determines whether to accept more args, independently of the presence of a
+    # semicolon for the ".?(" syntax
     moreargs && push!(args_ex, Vararg{Any})
 
     seen = Base.IdSet()
@@ -557,7 +564,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
                 funct = Core.Typeof(func)
                 if !in(funct, seen)
                     push!(seen, funct)
-                    complete_methods!(out, funct, args_ex, kwargs_ex, MAX_ANY_METHOD_COMPLETIONS)
+                    complete_methods!(out, funct, args_ex, kwargs_ex, MAX_ANY_METHOD_COMPLETIONS, false)
                 end
             elseif callee_module === Main && isa(func, Module)
                 callee_module2 = func
@@ -568,7 +575,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
                             funct = Core.Typeof(func)
                             if !in(funct, seen)
                                 push!(seen, funct)
-                                complete_methods!(out, funct, args_ex, kwargs_ex, MAX_ANY_METHOD_COMPLETIONS)
+                                complete_methods!(out, funct, args_ex, kwargs_ex, MAX_ANY_METHOD_COMPLETIONS, false)
                             end
                         end
                     end
@@ -590,36 +597,80 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
     return out
 end
 
+
+function detect_invalid_kwarg!(kwargs_ex, n, kwargs_flag, allow_splat)
+    if n isa Symbol
+        push!(kwargs_ex, n)
+        return kwargs_flag
+    end
+    allow_splat && isexpr(n, :...) && return kwargs_flag
+    return 2 # The kwarg is invalid
+end
+
 function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_module::Module, default_any::Bool, allow_broadcasting::Bool)
     args_ex = Any[]
     kwargs_ex = Symbol[]
+    kwargs_flag = 0
+    # kwargs_flag is:
+    # * 0 if there is no semicolon and no invalid kwarg
+    # * 1 if there is a semicolon and no invalid kwarg
+    # * 2 if there are two semicolons or more, or if some kwarg is invalid, which
+    #        means that it is not of the form "bar=foo", "bar" or "bar..."
     if allow_broadcasting && ex_org.head === :. && ex_org.args[2] isa Expr
         # handle broadcasting, but only handle number of arguments instead of
         # argument types
-        append!(args_ex, Any for _ in (ex_org.args[2]::Expr).args)
+        for ex in (ex_org.args[2]::Expr).args
+            if isexpr(ex, :parameters)
+                kwargs_flag = ifelse(kwargs_flag == 0, 1, 2) # there should be at most one :parameters
+                for x in ex.args
+                    n = isexpr(x, :kw) ? x.args[1] : x
+                    if !(n isa Symbol) || !isexpr(x, :...)
+                        kwargs_flag = 2
+                    end
+                end
+            elseif isexpr(ex, :kw)
+                if !(first(ex.args) isa Symbol)
+                    kwargs_flag = 2
+                end
+            else
+                push!(args_ex, isexpr(ex, :...) ? Vararg{Any} : Any)
+            end
+        end
     else
         for ex in funargs
             if isexpr(ex, :parameters)
+                kwargs_flag = ifelse(kwargs_flag == 0, 1, 2) # there should be at most one :parameters
                 for x in ex.args
-                    n = isexpr(x, :kw) ? first(x.args) : x
-                    n isa Symbol || continue # happens if the current arg is splat
-                    push!(kwargs_ex, n)
+                    kwargs_flag = if isexpr(x, :kw)
+                        detect_invalid_kwarg!(kwargs_ex, first(x.args), kwargs_flag, false)
+                    else
+                        detect_invalid_kwarg!(kwargs_ex, x, kwargs_flag, true)
+                    end
                 end
             elseif isexpr(ex, :kw)
                 n = first(ex.args)
-                n isa Symbol || continue # happens if the current arg is splat
-                push!(kwargs_ex, n)
+                kwargs_flag = detect_invalid_kwarg!(kwargs_ex, n, kwargs_flag, false)
             else
                 push!(args_ex, get_type(get_type(ex, context_module)..., default_any))
             end
         end
     end
-    return args_ex, Set{Symbol}(kwargs_ex)
+    return args_ex, Set{Symbol}(kwargs_ex), kwargs_flag
 end
 
-function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_ex::Vector{Any}, kwargs_ex::Set{Symbol}, max_method_completions::Int)
+function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_ex::Vector{Any}, kwargs_ex::Set{Symbol}, max_method_completions::Int, exact_narg::Bool)
     # Input types and number of arguments
-    t_in = Tuple{funct, args_ex...}
+    num_splat = 0 # number of splat arguments in args_ex
+    args_ex_onevararg = copy(args_ex) # args_ex_onevararg contains at most one Vararg, put in final position
+    for (i, arg) in enumerate(args_ex)
+        if Base.isvarargtype(arg)
+            num_splat += 1
+            num_splat > 1 && continue
+            args_ex_onevararg[i] = Vararg{Any}
+            resize!(args_ex_onevararg, i)
+        end
+    end
+    t_in = Tuple{funct, args_ex_onevararg...}
     m = Base._methods_by_ftype(t_in, nothing, max_method_completions, Base.get_world_counter(),
         #=ambig=# true, Ref(typemin(UInt)), Ref(typemax(UInt)), Ptr{Int32}(C_NULL))
     if m === false
@@ -627,7 +678,26 @@ function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_e
     end
     m isa Vector || return
     for match in m
+        if exact_narg
+            # If there is a semicolon, the number of non-keyword arguments in the
+            # call cannot grow. It must thus match that of the method.
+            meth_nargs = match.method.nargs - 1 # remove the function itself
+            exn_args = length(args_ex)
+            if meth_nargs != exn_args
+                # the match may still hold if some arguments are slurped or splat
+                num_slurp = count(Base.isvarargtype, Base.unwrap_unionall(match.method.sig).types)
+                num_slurp == 0 && num_splat == 0 && continue
+                if num_slurp == 0
+                    meth_nargs ≥ exn_args - num_splat || continue
+                elseif num_splat == 0
+                    exn_args ≥ meth_nargs - num_slurp || continue
+                end
+            end
+        end
+
         if !isempty(kwargs_ex)
+            # Only suggest a method if it can accept all the kwargs already present in
+            # the call, or if it slurps keyword arguments
             possible_kwargs = Base.kwarg_decl(match.method)
             slurp = false
             for _kw in possible_kwargs
@@ -636,8 +706,6 @@ function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_e
                     break
                 end
             end
-            # Only suggest a method if it can accept all the kwargs already present in
-            # the call, or if it slurps keyword arguments
             slurp || kwargs_ex ⊆ possible_kwargs || continue
         end
         push!(out, MethodCompletion(match.spec_types, match.method))
@@ -781,16 +849,12 @@ function complete_keyword_argument(partial, last_idx, context_module)
     # inlined `complete_methods` function since we need the `kwargs_ex` variable
     func, found = get_value(ex.args[1], context_module)
     !(found::Bool) && return fail
-    args_ex, kwargs_ex = complete_methods_args(ex.args[2:end], ex, context_module, true, true)
+    args_ex, kwargs_ex, kwargs_flag = complete_methods_args(ex.args[2:end], ex, context_module, true, true)
 
-    # Only try to complete as a kwarg if the context makes it clear that the current
-    # argument could be a kwarg (i.e. right after ';' or if there is another kwarg)
-    isempty(kwargs_ex) && last_punct != ';' &&
-        all(x -> !(x isa Expr) || (x.head !== :kw && x.head !== :parameters), ex.args[2:end]) &&
-        return fail
+    kwargs_flag == 2 && return fail # one of the previous kwargs is invalid
 
     methods = Completion[]
-    complete_methods!(methods, Core.Typeof(func), args_ex, kwargs_ex, -1)
+    complete_methods!(methods, Core.Typeof(func), args_ex, kwargs_ex, -1, kwargs_flag == 1)
 
     # Finally, for each method corresponding to the function call, provide completions
     # suggestions for each keyword that starts like the last word and that is not already
