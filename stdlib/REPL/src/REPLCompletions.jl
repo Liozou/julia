@@ -558,7 +558,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
 
     seen = Base.IdSet()
     for name in names(callee_module; all=true)
-        if !Base.isdeprecated(callee_module, name) && isdefined(callee_module, name) && !startswith(string(name), "#kw")
+        if !Base.isdeprecated(callee_module, name) && isdefined(callee_module, name) && !startswith(string(name), '#')
             func = getfield(callee_module, name)
             if !isa(func, Module)
                 funct = Core.Typeof(func)
@@ -569,7 +569,7 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
             elseif callee_module === Main && isa(func, Module)
                 callee_module2 = func
                 for name in names(callee_module2)
-                    if !Base.isdeprecated(callee_module2, name) && isdefined(callee_module2, name) && !startswith(string(name), "#kw")
+                    if !Base.isdeprecated(callee_module2, name) && isdefined(callee_module2, name) && !startswith(string(name), '#')
                         func = getfield(callee_module, name)
                         if !isa(func, Module)
                             funct = Core.Typeof(func)
@@ -598,16 +598,17 @@ function complete_any_methods(ex_org::Expr, callee_module::Module, context_modul
 end
 
 
-function detect_invalid_kwarg!(kwargs_ex, n, kwargs_flag, allow_splat)
+function detect_invalid_kwarg!(kwargs_ex, @nospecialize(x), kwargs_flag, possible_splat)
+    n = isexpr(x, :kw) ? x.args[1] : x
     if n isa Symbol
         push!(kwargs_ex, n)
         return kwargs_flag
     end
-    allow_splat && isexpr(n, :...) && return kwargs_flag
+    possible_splat && isexpr(x, :...) && return kwargs_flag
     return 2 # The kwarg is invalid
 end
 
-function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_module::Module, default_any::Bool, allow_broadcasting::Bool)
+function detect_args_kwargs(funargs::Vector{Any}, context_module::Module, default_any::Bool, ::Val{broadcasting}) where {broadcasting}
     args_ex = Any[]
     kwargs_ex = Symbol[]
     kwargs_flag = 0
@@ -616,40 +617,19 @@ function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_modul
     # * 1 if there is a semicolon and no invalid kwarg
     # * 2 if there are two semicolons or more, or if some kwarg is invalid, which
     #        means that it is not of the form "bar=foo", "bar" or "bar..."
-    if allow_broadcasting && ex_org.head === :. && ex_org.args[2] isa Expr
-        # handle broadcasting, but only handle number of arguments instead of
-        # argument types
-        for ex in (ex_org.args[2]::Expr).args
-            if isexpr(ex, :parameters)
-                kwargs_flag = ifelse(kwargs_flag == 0, 1, 2) # there should be at most one :parameters
-                for x in ex.args
-                    n = isexpr(x, :kw) ? x.args[1] : x
-                    if !(n isa Symbol) || !isexpr(x, :...)
-                        kwargs_flag = 2
-                    end
-                end
-            elseif isexpr(ex, :kw)
-                if !(first(ex.args) isa Symbol)
-                    kwargs_flag = 2
-                end
-            else
-                push!(args_ex, isexpr(ex, :...) ? Vararg{Any} : Any)
+    for ex in funargs
+        if isexpr(ex, :parameters)
+            kwargs_flag = ifelse(kwargs_flag == 0, 1, 2) # there should be at most one :parameters
+            for x in ex.args
+                kwargs_flag = detect_invalid_kwarg!(kwargs_ex, x, kwargs_flag, true)
             end
-        end
-    else
-        for ex in funargs
-            if isexpr(ex, :parameters)
-                kwargs_flag = ifelse(kwargs_flag == 0, 1, 2) # there should be at most one :parameters
-                for x in ex.args
-                    kwargs_flag = if isexpr(x, :kw)
-                        detect_invalid_kwarg!(kwargs_ex, first(x.args), kwargs_flag, false)
-                    else
-                        detect_invalid_kwarg!(kwargs_ex, x, kwargs_flag, true)
-                    end
-                end
-            elseif isexpr(ex, :kw)
-                n = first(ex.args)
-                kwargs_flag = detect_invalid_kwarg!(kwargs_ex, n, kwargs_flag, false)
+        elseif isexpr(ex, :kw)
+            kwargs_flag = detect_invalid_kwarg!(kwargs_ex, ex, kwargs_flag, false)
+        else
+            if broadcasting
+                # handle broadcasting, but only handle number of arguments instead of
+                # argument types
+                push!(args_ex, isexpr(ex, :...) ? Vararg{Any} : Any)
             else
                 push!(args_ex, get_type(get_type(ex, context_module)..., default_any))
             end
@@ -658,11 +638,19 @@ function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_modul
     return args_ex, Set{Symbol}(kwargs_ex), kwargs_flag
 end
 
+function complete_methods_args(funargs::Vector{Any}, ex_org::Expr, context_module::Module, default_any::Bool, allow_broadcasting::Bool)
+    if allow_broadcasting && ex_org.head === :. && ex_org.args[2] isa Expr
+        return detect_args_kwargs((ex_org.args[2]::Expr).args, context_module, default_any, Val(true))
+    end
+    return detect_args_kwargs(funargs, context_module, default_any, Val(false))
+end
+
 function complete_methods!(out::Vector{Completion}, @nospecialize(funct), args_ex::Vector{Any}, kwargs_ex::Set{Symbol}, max_method_completions::Int, exact_narg::Bool)
     # Input types and number of arguments
     num_splat = 0 # number of splat arguments in args_ex
     args_ex_onevararg = copy(args_ex) # args_ex_onevararg contains at most one Vararg, put in final position
-    for (i, arg) in enumerate(args_ex)
+    for i in 1:length(args_ex)
+        arg = args_ex[i]
         if Base.isvarargtype(arg)
             num_splat += 1
             num_splat > 1 && continue
@@ -989,7 +977,6 @@ function completions(string::String, pos::Int, context_module::Module=Main, shif
     # Check whether we can complete a keyword argument in a function call
     kwarg_completion, wordrange = complete_keyword_argument(partial, pos, context_module)
     isempty(wordrange) || return kwarg_completion, wordrange, !isempty(kwarg_completion)
-
 
     dotpos = something(findprev(isequal('.'), string, pos), 0)
     startpos = nextind(string, something(findprev(in(non_identifier_chars), string, pos), 0))

@@ -570,6 +570,8 @@ let s = "CompletionFoo.kwtest2(1, x=1,"
     @test (c, r, res) == test_complete("CompletionFoo.kwtest2(y=3, 1; ")
     @test (c, r, res) == test_complete("CompletionFoo.kwtest2(kw=3, 1, ")
     @test (c, r, res) == test_complete("CompletionFoo.kwtest2(kw=3, 1; ")
+    @test (c, r, res) == test_complete("CompletionFoo.kwtest2(1; ")
+    @test (c, r, res) == test_complete("CompletionFoo.kwtest2(1, ")
 end
 
 let s = "CompletionFoo.kwtest4(x23=18, x; "
@@ -1423,7 +1425,13 @@ end
     c, r = test_complete("CompletionFoo.kwtest4(a; xαβγ=1, _")
     @test "_a1b=" ∈ c
     @test "_something=" ∉ c # no such keyword for the method with keyword `xαβγ`
+    c, r = test_complete("CompletionFoo.kwtest4.(a; xαβγ=1, _")
+    @test "_a1b=" ∈ c
+    @test "_something=" ∉ c # broadcasting does not affect the existence of kwargs
     c, r = test_complete("CompletionFoo.kwtest4(a; x23=0, x")
+    @test "x23=" ∉ c
+    @test "xαβγ=" ∉ c
+    c, r = test_complete("CompletionFoo.kwtest4.(a; x23=0, x")
     @test "x23=" ∉ c
     @test "xαβγ=" ∉ c
     c, r = test_complete("CompletionFoo.kwtest4(a; _a1b=1, x")
@@ -1597,7 +1605,6 @@ let s = "test.(1,1, "
     @test (c, r, res) == test_complete_foo("test.(1, 1, String[]..., ")
     @test (c, r, res) == test_complete_foo("test.(1, Any[]..., 2, ")
 end
-
 
 let s = "prevind(\"θ\",1,"
     c, r, res = test_complete_foo(s)
