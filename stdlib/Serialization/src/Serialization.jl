@@ -1422,7 +1422,7 @@ function deserialize(s::AbstractSerializer, ::Type{UnionAll})
 end
 
 function deserialize(s::AbstractSerializer, ::Type{Task})
-    t = Task(()->nothing)
+    t = Task(Returns(nothing))
     deserialize_cycle(s, t)
     t.code = deserialize(s)
     t.storage = deserialize(s)

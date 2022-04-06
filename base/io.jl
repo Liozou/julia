@@ -1010,7 +1010,7 @@ struct EachLine{IOT <: IO}
     stream::IOT
     ondone::Function
     keep::Bool
-    EachLine(stream::IO=stdin; ondone::Function=()->nothing, keep::Bool=false) =
+    EachLine(stream::IO=stdin; ondone::Function=Returns(nothing), keep::Bool=false) =
         new{typeof(stream)}(stream, ondone, keep)
 end
 

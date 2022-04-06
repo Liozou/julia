@@ -575,7 +575,7 @@ function lift_comparison_leaves!(@specialize(tfunc),
     # perform lifting
     lifted_val = perform_lifting!(compact,
         visited_phinodes, cmp, lifting_cache, Bool,
-        lifted_leaves::LiftedLeaves, val, ()->nothing, idx)::LiftedValue
+        lifted_leaves::LiftedLeaves, val, Returns(nothing), idx)::LiftedValue
 
     compact[idx] = lifted_val.x
 end

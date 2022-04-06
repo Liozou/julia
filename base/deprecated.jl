@@ -226,7 +226,7 @@ export isimmutable
 
 macro get!(h, key0, default)
     f, l = __source__.file, __source__.line
-    @warn "`@get!(dict, key, default)` at $f:$l is deprecated, use `get!(()->default, dict, key)` instead."
+    @warn "`@get!(dict, key, default)` at $f:$l is deprecated, use `get!(dict, key, default)` instead."
     return quote
         get!(()->$(esc(default)), $(esc(h)), $(esc(key0)))
     end

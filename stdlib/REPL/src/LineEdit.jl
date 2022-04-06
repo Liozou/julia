@@ -2476,7 +2476,7 @@ function Prompt(prompt
     repl = nothing,
     complete = EmptyCompletionProvider(),
     on_enter = default_enter_cb,
-    on_done = ()->nothing,
+    on_done = Returns(nothing),
     hist = EmptyHistoryProvider(),
     sticky = false)
 
