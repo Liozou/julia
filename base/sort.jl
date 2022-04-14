@@ -68,6 +68,38 @@ function issorted(itr, order::Ordering)
     return true
 end
 
+function sortcheck(itr)
+    y = iterate(itr)
+    y === nothing && return 1
+    prev, state = y
+    fst = prev
+    y = iterate(itr, state)
+    local this
+    while y !== nothing
+        this, state = y
+        if isless(this, prev)
+            isequal(prev, fst) || return 0
+            y = iterate(itr, state)
+            y === nothing && return -1
+            this, state = y
+            isless(prev, this) && return 0
+            @goto reverseloop
+        end
+        prev = this
+        y = iterate(itr, state)
+    end
+    return 1
+
+    while y !== nothing
+        this, state = y
+        isless(prev, this) && return 0
+        @label reverseloop
+        prev = this
+        y = iterate(itr, state)
+    end
+    return -1
+end
+
 """
     issorted(v, lt=isless, by=identity, rev::Bool=false, order::Ordering=Forward)
 
