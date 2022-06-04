@@ -316,6 +316,23 @@ function getindex(V::FastContiguousSubArray{<:Any, 1}, i::Int)
     r
 end
 
+@propagate_inbounds function isassigned(V::SubArray{T,N}, I::Vararg{Int,N}) where {T,N}
+    @boundscheck checkbounds(Bool, V, I...) || return false
+    @inbounds isassigned(V.parent, reindex(V.indices, I)...)
+end
+@propagate_inbounds function isassigned(V::FastSubArray, i::Int)
+    isassigned(V.parent, V.offset1 + V.stride1*i)
+end
+@propagate_inbounds function isassigned(V::FastContiguousSubArray, i::Int)
+    isassigned(V.parent, V.offset1 + i)
+end
+@propagate_inbounds function isassigned(V::FastSubArray{<:Any, 1}, i::Int)
+    isassigned(V.parent, V.offset1 + V.stride1*i)
+end
+@propagate_inbounds function isassigned(V::FastContiguousSubArray{<:Any, 1}, i::Int)
+    isassigned(V.parent, V.offset1 + i)
+end
+
 # Indexed assignment follows the same pattern as `getindex` above
 function setindex!(V::SubArray{T,N}, x, I::Vararg{Int,N}) where {T,N}
     @inline

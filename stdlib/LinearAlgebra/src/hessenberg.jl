@@ -88,6 +88,10 @@ function setindex!(A::UpperHessenberg, x, i::Integer, j::Integer)
     return A
 end
 
+@propagate_inbounds function Base.isassigned(H::UpperHessenberg, i::Integer, j::Integer)
+    i ≤ j+1 ? isassigned(H.data, i, j) : true
+end
+
 function Base.replace_in_print_matrix(A::UpperHessenberg, i::Integer, j::Integer, s::AbstractString)
     return i <= j+1 ? s : Base.replace_with_centered_mark(s)
 end

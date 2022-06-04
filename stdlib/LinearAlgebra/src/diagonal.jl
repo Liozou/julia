@@ -131,6 +131,11 @@ function setindex!(D::Diagonal, v, i::Int, j::Int)
     return v
 end
 
+@propagate_inbounds function Base.isassigned(D::Diagonal, i::Integer, j::Integer)
+    @boundscheck checkbounds(D, i, j) || return false
+    i == j && return @inbounds isassigned(D.diag, i)
+    true
+end
 
 ## structured matrix methods ##
 function Base.replace_in_print_matrix(A::Diagonal,i::Integer,j::Integer,s::AbstractString)

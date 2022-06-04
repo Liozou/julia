@@ -559,10 +559,17 @@ end
 size_to_strides(s, d) = (s,)
 size_to_strides(s) = ()
 
+# Fallback for isassigned with types that can only throw BoundsError
+@propagate_inbounds function isinbounds(a::AbstractArray, i::Integer...)
+    @boundscheck return checkbounds(Bool, a, i...)
+    true
+end
 
-function isassigned(a::AbstractArray, i::Integer...)
+# General fallback for isassigned
+function isassigned_fallback(A::AbstractArray, I::Integer...)
+    println("FALLBACK ", typeof(A), " ", typeof(I))
     try
-        a[i...]
+        A[I...]
         true
     catch e
         if isa(e, BoundsError) || isa(e, UndefRefError)
@@ -572,6 +579,30 @@ function isassigned(a::AbstractArray, i::Integer...)
         end
     end
 end
+
+@propagate_inbounds _isassigned(::IndexStyle, A::AbstractArray, I...) = isassigned_fallback(A, I...)
+@propagate_inbounds _isassigned(::IndexLinear, A::AbstractVector, i::Int) = isassigned(A, i) # ambiguity resolution
+@propagate_inbounds _isassigned(::IndexLinear, A::AbstractArray, i::Int) = isassigned(A, i)
+@propagate_inbounds function _isassigned(::IndexLinear, A::AbstractArray, I::Vararg{Int,M}) where M
+    @boundscheck checkbounds(Bool, A, I...) || return false
+    isassigned(A, _to_linear_index(A, I...))
+end
+@propagate_inbounds function _isassigned(::IndexCartesian, A::AbstractArray, I::Vararg{Int,M}) where M
+    @boundscheck checkbounds(Bool, A, I...) || return false
+    isassigned(A, _to_subscript_indices(A, I...)...)
+end
+@propagate_inbounds function _isassigned(::IndexCartesian, A::AbstractArray{T,N}, I::Vararg{Int,N}) where {T,N}
+    isassigned(A, I...)
+end
+
+@propagate_inbounds function isassigned(A::AbstractArray{T,N}, I...) where {T,N}
+    if I isa Tuple{Int} || I isa NTuple{N,Int}
+        return isassigned_fallback(A, I...)
+    end
+    _isassigned(IndexStyle(A), A, to_indices(A, I)...)
+end
+# To avoid invalidations from multidimensional.jl: isassigned(A::Array, i1::Union{Integer, CartesianIndex}, I::Union{Integer, CartesianIndex}...)
+@propagate_inbounds isassigned(A::Array, i1::Integer, I::Integer...) = isassigned(A, to_indices(A, (i1, I...))...)
 
 function isstored(A::AbstractArray{<:Any,N}, I::Vararg{Integer,N}) where {N}
     @boundscheck checkbounds(A, I...)

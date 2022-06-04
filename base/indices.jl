@@ -500,3 +500,9 @@ first(iter::LinearIndices) = 1
 first(iter::LinearIndices{1}) = (@inline; first(axes1(iter.indices[1])))
 last(iter::LinearIndices) = (@inline; length(iter))
 last(iter::LinearIndices{1}) = (@inline; last(axes1(iter.indices[1])))
+
+function isassigned(iter::LinearIndices, I::Integer...)
+    @inline
+    @boundscheck return checkbounds(Bool, iter, I...)
+    true
+end

@@ -274,6 +274,8 @@ SimdLoop.simd_inner_length(::SCartesianIndices2{K}, ::Any) where K = K
     SCartesianIndex2{K}(I1+1, Ilast)
 end
 
+@propagate_inbounds isassigned(s::SCartesianIndices2, I::Integer...) = isinbounds(s, I...)
+
 _maybe_reshape(::IndexSCartesian2, A::ReshapedReinterpretArray, I...) = A
 
 # fallbacks
@@ -284,6 +286,10 @@ end
 function _setindex!(::IndexSCartesian2, A::AbstractArray{T,N}, v, I::Vararg{Int, N}) where {T,N}
     @_propagate_inbounds_meta
     setindex!(A, v, I...)
+end
+function _isassigned(::IndexSCartesian2, A::AbstractArray{T,N}, I::Vararg{Int, N}) where {T,N}
+    @_propagate_inbounds_meta
+    isassigned(A, I...)
 end
 # fallbacks for array types that use "pass-through" indexing (e.g., `IndexStyle(A) = IndexStyle(parent(A))`)
 # but which don't handle SCartesianIndex2
@@ -296,6 +302,11 @@ function _setindex!(::IndexSCartesian2, A::AbstractArray{T,N}, v, ind::SCartesia
     @_propagate_inbounds_meta
     J = _ind2sub(tail(axes(A)), ind.j)
     setindex!(A, v, ind.i, J...)
+end
+function _isassigned(::IndexSCartesian2, A::AbstractArray{T,N}, ind::SCartesianIndex2) where {T,N}
+    @_propagate_inbounds_meta
+    J = _ind2sub(tail(axes(A)), ind.j)
+    isassigned(A, ind.i, J...)
 end
 eachindex(style::IndexSCartesian2, A::AbstractArray) = eachindex(style, parent(A))
 
@@ -771,3 +782,9 @@ end
 
 mapreduce_impl(f::F, op::OP, A::AbstractArrayOrBroadcasted, ifirst::SCartesianIndex2, ilast::SCartesianIndex2) where {F,OP} =
     mapreduce_impl(f, op, A, ifirst, ilast, pairwise_blocksize(f, op))
+
+@propagate_inbounds function isassigned(a::ReinterpretArray, i::Integer...)
+    # The eltype of a reinterpretarray is always isbitstype so there cannot be any #undef
+    @boundscheck return checkbounds(Bool, a, i...)
+    true
+end

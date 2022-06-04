@@ -155,6 +155,18 @@ end
     return x
 end
 
+@propagate_inbounds function Base.isassigned(A::Bidiagonal, i::Integer, j::Integer)
+    @boundscheck checkbounds(A, i, j) || return false
+    if i == j
+        return @inbounds isassigned(A.dv, i)
+    elseif A.uplo == 'U' && (i == j - 1)
+        return @inbounds isassigned(A.ev, i)
+    elseif A.uplo == 'L' && (i == j + 1)
+        return @inbounds isassigned(A.ev, j)
+    end
+    true
+end
+
 ## structured matrix methods ##
 function Base.replace_in_print_matrix(A::Bidiagonal,i::Integer,j::Integer,s::AbstractString)
     if A.uplo == 'U'

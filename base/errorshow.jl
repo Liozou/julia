@@ -301,6 +301,9 @@ function showerror(io::IO, ex::MethodError)
         if basef !== ex.f && hasmethod(basef, arg_types)
             print(io, "\nYou may have intended to import ")
             show_unquoted(io, Expr(:., :Base, QuoteNode(name)))
+        elseif (f === Base.filter || f === Base.reverse) && length(ex.args) == 2
+            fname = typeof(f).name.mt.name
+            print(io, "\nYou might want to use Iterators.", fname, " instead of Base.", fname)
         end
     end
     if (ex.world != typemax(UInt) && hasmethod(ex.f, arg_types) &&

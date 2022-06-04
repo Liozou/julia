@@ -305,3 +305,11 @@ function strides(a::ReshapedArray)
     _checkcontiguous(Bool, a) || throw(ArgumentError("Parent must be contiguous."))
     size_to_strides(1, size(a)...)
 end
+
+@propagate_inbounds isassigned(a::ReshapedArrayLF, i::Int) = isassigned(parent(a), i)
+@propagate_inbounds function isassigned(a::ReshapedArray, indices::Integer...)
+    axp = axes(a.parent)
+    i = offset_if_vec(_sub2ind(size(a), indices...), axp)
+    I = ind2sub_rs(axp, a.mi, i)
+    isassigned(a.parent, I...)
+end

@@ -32,6 +32,7 @@ Base.axes(C::Const) = axes(C.a)
     (Base.@inline; Core.const_arrayref($(Expr(:boundscheck)), A.a, i1))
 @eval Base.getindex(A::Const, i1::Int, i2::Int, I::Int...) =
   (Base.@inline; Core.const_arrayref($(Expr(:boundscheck)), A.a, i1, i2, I...))
+Base.@propagate_inbounds Base.isassigned(A::Const, I::Integer...) = isassigned(A.a, I...)
 
 """
     @aliasscope expr

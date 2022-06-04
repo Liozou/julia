@@ -369,6 +369,11 @@ module IteratorsMD
     end
     @inline Base.getindex(iter::CartesianIndices{0}, ::CartesianIndices{0}) = iter
 
+    @inline Base.isassigned(::CartesianIndices{0}) = true
+    @propagate_inbounds function Base.isassigned(iter::CartesianIndices, I::Integer...)
+        isinbounds(iter, I...)
+    end
+
     # If dimensions permit, we may index into a CartesianIndices directly instead of constructing a SubArray wrapper
     @propagate_inbounds function Base.view(c::CartesianIndices{N}, r::Vararg{Union{OrdinalRange{<:Integer, <:Integer}, Colon},N}) where {N}
         getindex(c, r...)

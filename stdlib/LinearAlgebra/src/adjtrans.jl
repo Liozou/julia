@@ -184,6 +184,15 @@ IndexStyle(::Type{<:AdjOrTransAbsMat}) = IndexCartesian()
 @propagate_inbounds getindex(v::AdjOrTransAbsVec, ::Colon, is::AbstractArray{Int}) = wrapperop(v)(v.parent[is])
 @propagate_inbounds getindex(v::AdjOrTransAbsVec, ::Colon, ::Colon) = wrapperop(v)(v.parent[:])
 
+@propagate_inbounds function Base.isassigned(v::AdjOrTransAbsVec, i::Integer)
+    ax = axes(v.parent)
+    isassigned(ax, 1) || return false
+    isassigned(v.parent, i-1+first(ax[1]))
+end
+@propagate_inbounds function Base.isassigned(v::AdjOrTransAbsVec, i::Integer, j::Integer)
+    isassigned(v.parent, j, i)
+end
+
 # conversion of underlying storage
 convert(::Type{Adjoint{T,S}}, A::Adjoint) where {T,S} = Adjoint{T,S}(convert(S, A.parent))
 convert(::Type{Transpose{T,S}}, A::Transpose) where {T,S} = Transpose{T,S}(convert(S, A.parent))

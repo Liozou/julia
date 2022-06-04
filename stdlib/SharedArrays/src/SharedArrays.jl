@@ -511,6 +511,9 @@ Base.@propagate_inbounds getindex(S::SharedArray, i::Real) = getindex(S.s, i)
 
 Base.@propagate_inbounds setindex!(S::SharedArray, x, i::Real) = setindex!(S.s, x, i)
 
+# SharedArrays should only be populated with bitstype so all their elements are assigned
+Base.@propagate_inbounds Base.isassigned(S::SharedArray, I::Int...) = Base.isinbounds(S.s, I...)
+
 function fill!(S::SharedArray, v)
     vT = convert(eltype(S), v)
     f = S->fill!(S.loc_subarr_1d, vT)

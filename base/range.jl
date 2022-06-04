@@ -1419,6 +1419,22 @@ in(x::AbstractChar, r::AbstractRange{<:AbstractChar}) =
     (iszero(step(r)) ? x == first(r) : (x >= minimum(r) && x <= maximum(r) &&
         (mod(Int(x) - Int(first(r)), step(r)) == 0)))
 
+isassigned(r::AbstractRange, I::Int...) = (@inline; isinbounds(r, I...))
+
+_anyboolanderror() = nothing
+function _anyboolanderror(i, I...)
+    if i isa Bool
+        throw(ArgumentError("invalid index: $i of type Bool"))
+    end
+    _anyboolanderror(I...)
+end
+
+function isassigned(A::AbstractRange, I::Integer...) where {T,N}
+    @inline
+    _anyboolanderror(I...)
+    _isassigned(IndexStyle(A), A, to_indices(A, I)...)
+end
+
 # Addition/subtraction of ranges
 
 function _define_range_op(@nospecialize f)
