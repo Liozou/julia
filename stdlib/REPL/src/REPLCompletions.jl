@@ -809,10 +809,17 @@ function complete_keyword_argument(partial, last_idx, context_module)
     kwargs_flag, funct, args_ex, kwargs_ex = _complete_methods(ex, context_module, true)::Tuple{Int, Any, Vector{Any}, Set{Symbol}}
     kwargs_flag == 2 && return fail # one of the previous kwargs is invalid
 
-    methods = Completion[]
-    complete_methods!(methods, funct, Any[Vararg{Any}], kwargs_ex, -1, kwargs_flag == 1)
-    # TODO: use args_ex instead of Any[Vararg{Any}] and only provide kwarg completion for
-    # method calls compatible with the current arguments.
+    # get the list of possible kw method table
+    kwt = try; Core.kwftype(funct); catch ex; ex isa ErrorException || rethrow(); return fail; end
+    _completions = Completion[]
+    complete_methods!(_completions, kwt, Any[Any, funct, args_ex...], kwargs_ex, MAX_METHOD_COMPLETIONS, kwargs_flag == 1)
+    isempty(_completions) && return fail
+
+    ml = if first(_completions) isa TextCompletion
+        Base.MethodList(kwt.name.mt).ms
+    else
+        Method[(m::MethodCompletion).method for m in _completions]
+    end
 
     # For each method corresponding to the function call, provide completion suggestions
     # for each keyword that starts like the last word and that is not already used
@@ -821,11 +828,11 @@ function complete_keyword_argument(partial, last_idx, context_module)
     # since the syntax "foo(; kwname)" is equivalent to "foo(; kwname=kwname)".
     last_word = partial[wordrange] # the word to complete
     kwargs = Set{String}()
-    for m in methods
-        m::MethodCompletion
-        possible_kwargs = Base.kwarg_decl(m.method)
+    for m in ml
+        slotnames = ccall(:jl_uncompress_argnames, Vector{Symbol}, (Any,), m.slot_syms)
         current_kwarg_candidates = String[]
-        for _kw in possible_kwargs
+        for i in (m.nargs+1):length(slotnames)
+            _kw = slotnames[i]
             kw = String(_kw)
             if !endswith(kw, "...") && startswith(kw, last_word) && _kw ∉ kwargs_ex
                 push!(current_kwarg_candidates, kw)
