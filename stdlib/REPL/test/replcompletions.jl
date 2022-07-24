@@ -113,6 +113,7 @@ let ex = quote
         kwtest4(a::SubString; x23, _something) = pass
         kwtest5(a::Int, b, x...; somekwarg, somekotherkwarg) = pass
         kwtest5(a::Char, b; xyz) = pass
+        kwtest6(a::Unsigned, bar=12, qux=""; kwarg) = pass
 
         const named = (; len2=3)
 
@@ -1491,8 +1492,14 @@ end
     @test c == ["xyz="]
     c, r = test_complete("CompletionFoo.kwtest5('a', unknownsplat...; xy")
     @test c == ["xyz="]
+    #= TODO:
     c, r = test_complete("CompletionFoo.kwtest5('a', 3, String[]...; xy")
     @test c == ["xyz="]
+    =#
+
+    # Test kwarg completion even in presence of optional arguments
+    c, r = test_complete("CompletionFoo.kwtest6(0x3; kwa")
+    @test c == ["kwarg="]
 
     # return true if no completion suggests a keyword argument
     function hasnokwsuggestions(str)
