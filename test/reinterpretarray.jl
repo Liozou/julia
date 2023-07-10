@@ -512,6 +512,32 @@ end
     @test x == x2
     @test setindex!(x, SomeSingleton(:), 3, 5) == x2
     @test_throws MethodError x[2,4] = nothing
+
+    struct FieldsSingleton
+        x::Nothing
+        y::SomeSingleton
+        FieldsSingleton() = new(nothing, SomeSingleton(79))
+    end
+
+    y1 = reinterpret(FieldsSingleton, t)
+    @test y1[3,5] === y1[1] === FieldsSingleton()
+    @test setindex!(y1, FieldsSingleton(), 2, 3) === y1
+    @test_throws BoundsError y1[147] = FieldsSingleton()
+    @test_throws BoundsError y2[12, 2]
+    @test_throws MethodError y1[2, 2] = ()
+    y2 = reinterpret(reshape, FieldsSingleton, t)
+    @test y1 == y2
+    @test y2[1,3] === y2[12] === FieldsSingleton()
+    @test setindex!(y2, FieldsSingleton(), 3, 5) === y2
+    @test_throws BoundsError y2[2, 0] = FieldsSingleton()
+    @test_throws BoundsError y2[1, 2, 5]
+    @test_throws MethodError y2[3, 5] = nothing
+
+    @test vec(reinterpret(Nothing, fill(FieldsSingleton(), 3, 7))) == reinterpret(Nothing, fill(SomeSingleton(3), 21))
+    @test reinterpret(reshape, Missing, fill(FieldsSingleton(), 12)) == fill(missing, 12)
+    @test reinterpret(Tuple{}, fill(FieldsSingleton(), ()))[] === ()
+    @test reinterpret(FieldsSingleton, fill(Nothing, ()))[] === FieldsSingleton()
+    @test reinterpret(reshape, FieldsSingleton, fill((), (0,))) == fill(FieldsSingleton(), (0,))
 end
 
 # reinterpret of arbitrary bitstypes

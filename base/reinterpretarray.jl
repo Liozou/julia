@@ -389,12 +389,9 @@ end
 
 @inline @propagate_inbounds function _getindex_ra(a::NonReshapedReinterpretArray{T,N,S}, i1::Int, tailinds::TT) where {T,N,S,TT}
     # Make sure to match the scalar reinterpret if that is applicable
-    if sizeof(T) == sizeof(S) && (fieldcount(T) + fieldcount(S)) == 0
-        if issingletontype(T) # singleton types
-            @boundscheck checkbounds(a, i1, tailinds...)
-            return T.instance
-        end
-        return reinterpret(T, a.parent[i1, tailinds...])
+    if issingletontype(T)
+        @boundscheck checkbounds(a, i1, tailinds...)
+        return T.instance
     else
         @boundscheck checkbounds(a, i1, tailinds...)
         ind_start, sidx = divrem((i1-1)*sizeof(T), sizeof(S))
@@ -445,12 +442,9 @@ end
 
 @inline @propagate_inbounds function _getindex_ra(a::ReshapedReinterpretArray{T,N,S}, i1::Int, tailinds::TT) where {T,N,S,TT}
     # Make sure to match the scalar reinterpret if that is applicable
-    if sizeof(T) == sizeof(S) && (fieldcount(T) + fieldcount(S)) == 0
-        if issingletontype(T) # singleton types
-            @boundscheck checkbounds(a, i1, tailinds...)
-            return T.instance
-        end
-        return reinterpret(T, a.parent[i1, tailinds...])
+    if issingletontype(T) # singleton types
+        @boundscheck checkbounds(a, i1, tailinds...)
+        return T.instance
     end
     @boundscheck checkbounds(a, i1, tailinds...)
     if sizeof(T) >= sizeof(S)
@@ -529,70 +523,62 @@ end
 @inline @propagate_inbounds function _setindex_ra!(a::NonReshapedReinterpretArray{T,N,S}, v, i1::Int, tailinds::TT) where {T,N,S,TT}
     v = convert(T, v)::T
     # Make sure to match the scalar reinterpret if that is applicable
-    if sizeof(T) == sizeof(S) && (fieldcount(T) + fieldcount(S)) == 0
-        if issingletontype(T) # singleton types
-            @boundscheck checkbounds(a, i1, tailinds...)
-            # setindex! is a noop except for the index check
-        else
-            setindex!(a.parent, reinterpret(S, v), i1, tailinds...)
+    @boundscheck checkbounds(a, i1, tailinds...)
+    issingletontype(T) && return a # setindex! is a noop except for the index check
+    ind_start, sidx = divrem((i1-1)*sizeof(T), sizeof(S))
+    # Optimizations that avoid branches
+    if sizeof(T) % sizeof(S) == 0
+        # T is bigger than S and contains an integer number of them
+        t = Ref{T}(v)
+        GC.@preserve t begin
+            sptr = Ptr{S}(unsafe_convert(Ref{T}, t))
+            n = sizeof(T) ÷ sizeof(S)
+            for i = 1:n
+                s = unsafe_load(sptr, i)
+                a.parent[ind_start + i, tailinds...] = s
+            end
+        end
+    elseif sizeof(S) % sizeof(T) == 0
+        # S is bigger than T and contains an integer number of them
+        s = Ref{S}(a.parent[ind_start + 1, tailinds...])
+        GC.@preserve s begin
+            tptr = Ptr{T}(unsafe_convert(Ref{S}, s))
+            unsafe_store!(tptr + sidx, v)
+            a.parent[ind_start + 1, tailinds...] = s[]
         end
     else
-        @boundscheck checkbounds(a, i1, tailinds...)
-        ind_start, sidx = divrem((i1-1)*sizeof(T), sizeof(S))
-        # Optimizations that avoid branches
-        if sizeof(T) % sizeof(S) == 0
-            # T is bigger than S and contains an integer number of them
-            t = Ref{T}(v)
-            GC.@preserve t begin
-                sptr = Ptr{S}(unsafe_convert(Ref{T}, t))
-                n = sizeof(T) ÷ sizeof(S)
-                for i = 1:n
-                    s = unsafe_load(sptr, i)
-                    a.parent[ind_start + i, tailinds...] = s
-                end
+        t = Ref{T}(v)
+        s = Ref{S}()
+        GC.@preserve t s begin
+            tptr = Ptr{UInt8}(unsafe_convert(Ref{T}, t))
+            sptr = Ptr{UInt8}(unsafe_convert(Ref{S}, s))
+            nbytes_copied = 0
+            i = 1
+            # Deal with any partial elements at the start. We'll have to copy in the
+            # element from the original array and overwrite the relevant parts
+            if sidx != 0
+                s[] = a.parent[ind_start + i, tailinds...]
+                nb = min((sizeof(S) - sidx) % UInt, sizeof(T) % UInt)
+                memcpy(sptr + sidx, tptr, nb)
+                nbytes_copied += nb
+                a.parent[ind_start + i, tailinds...] = s[]
+                i += 1
+                sidx = 0
             end
-        elseif sizeof(S) % sizeof(T) == 0
-            # S is bigger than T and contains an integer number of them
-            s = Ref{S}(a.parent[ind_start + 1, tailinds...])
-            GC.@preserve s begin
-                tptr = Ptr{T}(unsafe_convert(Ref{S}, s))
-                unsafe_store!(tptr + sidx, v)
-                a.parent[ind_start + 1, tailinds...] = s[]
+            # Deal with the main body of elements
+            while nbytes_copied < sizeof(T) && (sizeof(T) - nbytes_copied) > sizeof(S)
+                nb = min(sizeof(S), sizeof(T) - nbytes_copied)
+                memcpy(sptr, tptr + nbytes_copied, nb)
+                nbytes_copied += nb
+                a.parent[ind_start + i, tailinds...] = s[]
+                i += 1
             end
-        else
-            t = Ref{T}(v)
-            s = Ref{S}()
-            GC.@preserve t s begin
-                tptr = Ptr{UInt8}(unsafe_convert(Ref{T}, t))
-                sptr = Ptr{UInt8}(unsafe_convert(Ref{S}, s))
-                nbytes_copied = 0
-                i = 1
-                # Deal with any partial elements at the start. We'll have to copy in the
-                # element from the original array and overwrite the relevant parts
-                if sidx != 0
-                    s[] = a.parent[ind_start + i, tailinds...]
-                    nb = min((sizeof(S) - sidx) % UInt, sizeof(T) % UInt)
-                    memcpy(sptr + sidx, tptr, nb)
-                    nbytes_copied += nb
-                    a.parent[ind_start + i, tailinds...] = s[]
-                    i += 1
-                    sidx = 0
-                end
-                # Deal with the main body of elements
-                while nbytes_copied < sizeof(T) && (sizeof(T) - nbytes_copied) > sizeof(S)
-                    nb = min(sizeof(S), sizeof(T) - nbytes_copied)
-                    memcpy(sptr, tptr + nbytes_copied, nb)
-                    nbytes_copied += nb
-                    a.parent[ind_start + i, tailinds...] = s[]
-                    i += 1
-                end
-                # Deal with trailing partial elements
-                if nbytes_copied < sizeof(T)
-                    s[] = a.parent[ind_start + i, tailinds...]
-                    nb = min(sizeof(S), sizeof(T) - nbytes_copied)
-                    memcpy(sptr, tptr + nbytes_copied, nb)
-                    a.parent[ind_start + i, tailinds...] = s[]
-                end
+            # Deal with trailing partial elements
+            if nbytes_copied < sizeof(T)
+                s[] = a.parent[ind_start + i, tailinds...]
+                nb = min(sizeof(S), sizeof(T) - nbytes_copied)
+                memcpy(sptr, tptr + nbytes_copied, nb)
+                a.parent[ind_start + i, tailinds...] = s[]
             end
         end
     end
@@ -602,15 +588,8 @@ end
 @inline @propagate_inbounds function _setindex_ra!(a::ReshapedReinterpretArray{T,N,S}, v, i1::Int, tailinds::TT) where {T,N,S,TT}
     v = convert(T, v)::T
     # Make sure to match the scalar reinterpret if that is applicable
-    if sizeof(T) == sizeof(S) && (fieldcount(T) + fieldcount(S)) == 0
-        if issingletontype(T) # singleton types
-            @boundscheck checkbounds(a, i1, tailinds...)
-            # setindex! is a noop except for the index check
-        else
-            setindex!(a.parent, reinterpret(S, v), i1, tailinds...)
-        end
-    end
     @boundscheck checkbounds(a, i1, tailinds...)
+    issingletontype(T) && return a # setindex! is a noop except for the index check
     if sizeof(T) >= sizeof(S)
         t = Ref{T}(v)
         GC.@preserve t begin
